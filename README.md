@@ -1,9 +1,9 @@
 # Proof-of-Learning
 
-This repository is an implementation of the paper used [Proof-of-Learning: Definitions and Practice](https://arxiv.org/abs/2103.05633), published in 42nd IEEE Symposium on
-Security and Privacy. In this paper, we introduce the concept of proof-of-learning in ML. Inspired by research on proof-of-work and verified computing, we observe how a seminal training algorithm, gradient descent, accumulates secret information due to its stochasticity. This produces a natural construction for a proof-of-learning, which demonstrates that a party has expended the computation required to obtain a set of model parameters correctly. For more details, please read the paper.
+This repository is forked from the implementation of the paper used [Proof-of-Learning: Definitions and Practice](https://arxiv.org/abs/2103.05633), published in the 42nd IEEE Symposium on
+Security and Privacy. In this paper, they introduced the concept of proof-of-learning in ML. Inspired by research on proof-of-work and verified computing, they observe how a seminal training algorithm, gradient descent, accumulates secret information due to its stochasticity. This produces a natural construction for a proof-of-learning, which demonstrates that a party has expended the computation required to obtain a set of model parameters correctly. 
 
-We test our code on two datasets: CIFAR-10, and CIFAR-100. 
+The code is tested on two datasets: CIFAR-10, and CIFAR-100. 
 
 ### Dependency
 Our code is implemented and tested on PyTorch. The following packages are used:
