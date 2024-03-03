@@ -19,34 +19,38 @@ Daytona Beach Campus
 1 Aerospace Boulevard  
 Daytona Beach, FL 32114
 
-## Proof-of-Learning
+## Enhancements in Proof-of-Learning with Adversarial Examples
 
-This repository is forked from the implementation of the paper used [Proof-of-Learning: Definitions and Practice](https://arxiv.org/abs/2103.05633), published in the 42nd IEEE Symposium on Security and Privacy. In this paper, they introduced the concept of proof-of-learning in ML. Inspired by research on proof-of-work and verified computing, they observe how a seminal training algorithm, gradient descent, accumulates secret information due to its stochasticity. This produces a natural construction for a proof-of-learning, demonstrating that a party has expended the computation required to obtain a set of model parameters correctly.
+This repository stems from the work presented in ["Proof-of-Learning: Definitions and Practice"](https://arxiv.org/abs/2103.05633), which was featured in the 42nd IEEE Symposium on Security and Privacy. The paper pioneers the Proof-of-Learning (PoL) concept within machine learning (ML), drawing inspiration from the proof-of-work systems and verified computing. It highlights how gradient descent, a fundamental algorithm in training ML models, inherently captures stochastic information. This characteristic facilitates the generation of PoL, substantiating that the computational efforts to derive a model's parameters were legitimately executed.
 
-This approach has some problems regarding security against spoofing attacks, and our research is focusing on how to make the PoL more secure against spoofing.
+However, this system could be more impervious to security challenges, notably spoofing attacks, which pose a significant risk to its integrity. Our research is dedicated to advancing the robustness of PoL, specifically by developing strategies to bolster its resilience against such attacks.
 
-The codebase is tested on two datasets: CIFAR-10 and CIFAR-100.
+In addition to the original PoL framework, this repository incorporates insights from the study on ["Adversarial Examples for Proof-of-Learning"](https://arxiv.org/abs/2108.09454). This paper elucidates a methodology that exposes vulnerabilities within the PoL by deploying adversarial examples, hence challenging the security assumptions of the initial PoL proposition. Our work here is to address these security concerns and fortify the PoL against these identified threats.
+
+We have employed datasets such as CIFAR-10, CIFAR-100, and a subset of ImageNet to test and validate our findings. For an in-depth understanding of our contributions to the PoL framework and the adversarial techniques, we would like you to take a look at the referenced papers.
 
 ### Dependency
 Our code is implemented and tested on PyTorch. The following packages are used:
-
+\subsection*{Dependency}
+Our code is implemented and tested on PyTorch. The following packages are used:
+```
 torch==1.8.0 torchvision==0.9.0 numpy scipy
-
+```
 ### Train
 To train a model and create a proof-of-learning:
-python train.py --save-freq [checkpointing interval] --dataset [any dataset in torchvision]
---model [models defined in model.py or any torchvision model]
-
+```
+python train.py --save-freq [checkpointing interval] --dataset [any dataset in torchvision] --model [models defined in model.py or any torchvision model]
+```
 `save-freq` is a checkpointing interval, denoted by k in the paper. You can find a few other arguments at the end of the script.
 
 Note that the proposed algorithm does not interact with the training process so that it could be applied to any kinds of gradient-descent based models.
 
 ### Verify
 To verify a given proof-of-learning:
-python verify.py --model-dir [path/to/the/proof] --dist [distance metric] --q [query budget]
---delta [slack parameter]
-
-Setting q to 0 or smaller will verify the whole proof, otherwise, the top-q iterations for each epoch will be verified. More information about q and delta can be found in the paper. For dist, you could use one or more of 1, 2, inf, cos (if more than one, separate them by space). The first 3 correspond to \(L_p\) norms, while cos is the cosine distance. Note that if using more than one, the top-q iterations in terms of all distance metrics will be verified.
+```
+python verify.py --model-dir [path/to/the/proof] --dist [distance metric] --q [query budget] --delta [slack parameter]
+```
+Setting q to 0 or smaller will verify the whole proof; otherwise, the top-q iterations for each epoch will be verified. More information about q and delta can be found in the paper. For dist, you could use one or more of 1, 2, inf, cos (if more than one, separate them by space). The first 3 correspond to \(L_p\) norms, while cos is the cosine distance. Note that if using more than one, the top-q iterations for all distance metrics will be verified.
 
 Please ensure lr, batch-size, epochs, dataset, model, and save-freq are consistent with what is used in train.py.
 
@@ -84,30 +88,12 @@ None of the steps is above the threshold, the proof-of-learning is valid.
 (myenv) PS C:\dev\Adversarial-examples-for-Proof-of-Learning>
 ```
 
-
-### Adversarial Examples for Proof-of-Learning
-
-This repository is an implementation of the paper ["Adversarial Examples" for Proof-of-Learning](https://arxiv.org/abs/2108.09454). In this paper, we introduce the a method that successfully 
-attack the concept of proof-of-learning in ML  [Proof-of-Learning: Definitions and Practice](https://arxiv.org/abs/2103.05633). 
-Inspired by research on adversarial examples. For more details, please read the paper.
-
-We test our code on two datasets: CIFAR-10, CIFAR-100, and a subset of ImageNet.
-
-\subsection*{Dependency}
-Our code is implemented and tested on PyTorch. Following packages are used:
-\begin{verbatim}
-numpy
-pytorch==1.6.0
-torchvision==0.7.0
-scipy==1.6.0
-\end{verbatim}
-
 ### Spoof
 To spoof a model on CIFAR-10 and CIFAR-100 with different attacks:
 ```
-python spoof_cifar/attack.py --attack [1,2,or 3 for three attacks] --dataset ['CIFAR100' or 'CIFAR10'] --model [models defined in model.py] --t [spoof steps] --verify [1 or 0]
+python spoof_cifar/attack.py --attack [1,2, or 3 for three attacks] --dataset ['CIFAR100' or 'CIFAR10'] --model [models defined in model.py] --t [spoof steps] --verify [1 or 0]
 ```
-We use 'resnet20' for CIFAR-10 and 'resnet50' for CIFAR-100. t is the spoof steps, denoted by T in the paper and here t =\frac{T}{100}.
+We use 'resnet20' for CIFAR-10 and 'resnet50' for CIFAR-100. t is the spoof steps, denoted by T in the paper, and here t =\frac{T}{100}.
 We use '--cut' to fit different devices when 'cut' is set to 100, attack3 is same with attack2.
 
 To spoof a model on the subset of ImageNet with different attacks:
@@ -117,15 +103,15 @@ python spoof_imagenet/spoof_attack3_imagenet.py --t [spoof steps] --verify [1 or
 ```
 'verify' is to control whether to verify the model.
 
-### Model generation
+### Model Generation
 To train a model and create a proof-of-learning:
 ```
 python PoL/train.py --save-freq [checkpointing interval] --dataset ['CIFAR100' or 'CIFAR10'] --model ['resnet50' or 'resnet20']
 python spoof_imagenet/train.py --freq [checkpointing interval]
 ```
-`save-freq` is checkpointing interval, denoted by k in the paper[Proof-of-Learning: Definitions and Practice](https://arxiv.org/abs/2103.05633). 
-To spoof the model, put the generated model in 'spoof_cifar/proof/[dataset]'. 
-To generated CIFAR10 and CIFAR100 models with high accuracy:
+`save-freq` is a checkpointing interval, denoted by k in the paper[Proof-of-Learning: Definitions and Practice](https://arxiv.org/abs/2103.05633). 
+Put the generated model in 'spoof_cifar/proof/[dataset]' to spoof the model. 
+To generate CIFAR10 and CIFAR100 models with high accuracy:
 ```
 python spoof_cifar/train.py --save-freq [checkpointing interval] --dataset ['CIFAR100' or 'CIFAR10'] --model ['resnet50' or 'resnet20']
 ```
@@ -137,6 +123,6 @@ python spoof_imagenet/verify.py --k [checkpointing interval]
 python spoof_cifar/verify.py --dataset ['CIFAR100' or 'CIFAR10'] --model [models defined in model.py] --iter [spoof steps * k] -- t [spoof steps] --k [checkpointing interval] 
 
 ```
-Setting q to 0 or smaller will verify the whole proof, otherwise the top-q iterations for each epoch will be verified. More information about `q` and `delta` can be found in the paper. For `dist`, you could use one or more of `1`, `2`, `inf`, `cos` (if more than one, separate them by space). The first 3 are corresponding l_p norms, while `cos` is cosine distance. Note that if using more than one, the top-q iterations in terms of all distance metrics will be verified.
+Setting q to 0 or smaller will verify the whole proof, otherwise the top-q iterations for each epoch will be verified. More information about `q` and `delta` can be found in the paper. For `dist`, you could use one or more of `1`, `2`, `inf`, `cos` (if more than one, separate them by space). The first 3 are corresponding l_p norms, while `cos` is cosine distance. Note that if using more than one, the top-q iterations for all distance metrics will be verified.
 
-Please make sure `lr`, `batch-sizr`, `epochs`, `dataset`, `model`, and `save-freq` are consistent with what used in `train.py`.
+Please ensure `lr`, `batch-sizr`, `epochs`, `dataset`, `model`, and `save-freq` are consistent with what is used in `train.py`.
