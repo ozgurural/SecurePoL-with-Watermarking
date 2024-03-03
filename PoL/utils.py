@@ -65,7 +65,7 @@ def parameter_distance(model1, model2, order=2, architecture=None, half=False):
             o = np.inf
         if o == 'cos' or o == 'cosine':
             res = (1 - torch.dot(weights1, weights2) /
-                   (torch.norm(weights1) * torch.norm(weights1))).cpu().numpy()
+                   (torch.norm(weights1) * torch.norm(weights2))).cpu().numpy()
         else:
             if o != np.inf:
                 try:
@@ -97,23 +97,27 @@ def load_dataset(dataset, train, download=False):
                 transforms.RandomRotation(15),
                 transforms.ToTensor(),
                 transforms.Normalize((0.5070751592371323, 0.48654887331495095, 0.4409178433670343),
-                                     (0.2673342858792401, 0.2564384629170883, 0.27615047132568404))])
+                                     (0.2673342858792401, 0.2564384629170883, 0.27615047132568404))
+                                 ])
         else:
             transform = transforms.Compose([
                 transforms.ToTensor(),
                 transforms.Normalize((0.5070751592371323, 0.48654887331495095, 0.4409178433670343),
-                                     (0.2673342858792401, 0.2564384629170883, 0.27615047132568404))])
+                                     (0.2673342858792401, 0.2564384629170883, 0.27615047132568404))
+            ])
     else:
         if train:
             transform = transforms.Compose([
-                transforms.RandomHorizontalFlip(),
                 transforms.RandomCrop(32, 4),
+                transforms.RandomHorizontalFlip(p=0.5),
                 transforms.ToTensor(),
-                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
+                transforms.Normalize(mean=[0.4914, 0.4822, 0.4465],std=[0.2023, 0.1994, 0.2010])
+            ])
         else:
             transform = transforms.Compose([
                 transforms.ToTensor(),
-                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
+                transforms.Normalize(mean=[0.4914, 0.4822, 0.4465],std=[0.2023, 0.1994, 0.2010])
+            ])
 
     data = dataset_class(root='./data', train=train, download=download, transform=transform)
     return data
@@ -151,12 +155,13 @@ def check_weights_initialization(param, method):
         weight, param = param
         fan_in, _ = nn.init._calculate_fan_in_and_fan_out(weight)
         bound = 1 / np.sqrt(fan_in)
+
         reference = torch.distributions.uniform.Uniform(-bound, bound).cdf
     else:
         raise NotImplementedError("Input initialization strategy is not implemented.")
 
     param = param.reshape(-1)
-    ks_stats = ks_test(reference, param).cpu().item()
+    ks_stats = ks_test(reference, param.cpu()).cpu().item()
     return stats.kstwo.sf(ks_stats, param.shape[0])
 
 
@@ -185,3 +190,22 @@ def check_weights_initialization_scipy(param, method):
 
     param = param.detach().numpy().reshape(-1)
     return stats.kstest(param, reference)[1]
+
+
+def test_accuracy(test_loader, model, num):
+    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    correct = 0
+    total = 0
+
+    with torch.no_grad():
+        for data in test_loader:
+            img, labels = data
+            img, labels = img.to(device), labels.to(device)
+            out = model(img)
+            _, pred = torch.max(out.data, 1)
+            total += labels.size(0)
+            correct += (pred == labels).sum().item()
+            if (total >= num):
+                break
+
+    return correct / total

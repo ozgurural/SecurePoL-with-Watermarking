@@ -7,21 +7,22 @@ import torch.nn as nn
 import torch.optim as optim
 import torchvision
 from collections import OrderedDict
-
+import time
 import utils
 import model as custom_model
 
 
 def train(lr, batch_size, epochs, dataset, architecture, exp_id=None, sequence=None,
-          model_dir=None, save_freq=None, num_gpu=torch.cuda.device_count(), verify=False, dec_lr=None,
+          model_dir=None, save_freq=None, num_gpu=1, verify=True, dec_lr=None,
           half=False, resume=False):
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    device = torch.device(dve if torch.cuda.is_available() else 'cpu')
 
     if sequence is not None or model_dir is not None:
         resume = False
 
     try:
         trainset = utils.load_dataset(dataset, True)
+        # trainset = torch.utils.data.Subset(trainset, np.arange(25000))
     except:
         trainset = utils.load_dataset(dataset, True, download=True)
 
@@ -130,13 +131,13 @@ def train(lr, batch_size, epochs, dataset, architecture, exp_id=None, sequence=N
     trainloader = torch.utils.data.DataLoader(subset, batch_size=batch_size, num_workers=0, pin_memory=True)
     net.train()
 
-    if save_freq is not None and save_freq > 0:
-        m = hashlib.sha256()
-        for d in subset.dataset.data:
-            m.update(d.__str__().encode('utf-8'))
-        f = open(os.path.join(save_dir, "hash.txt"), "x")
-        f.write(m.hexdigest())
-        f.close()
+    # if save_freq is not None and save_freq > 0:
+    #     m = hashlib.sha256()
+    #     for d in subset.dataset.data:
+    #         m.update(d.__str__().encode('utf-8'))
+    #     f = open(os.path.join(save_dir, "hash.txt"), "x")
+    #     f.write(m.hexdigest())
+    #     f.close()
 
     for i, data in enumerate(trainloader, 0):
         if save_freq is not None and i % save_freq == 0 and save_freq > 0:
@@ -158,10 +159,12 @@ def train(lr, batch_size, epochs, dataset, architecture, exp_id=None, sequence=N
         optimizer.step()
         if scheduler is not None:
             scheduler.step()
-
+        # print(f'Epoch {i // round(num_batch)}')
         if i > 0 and i % round(num_batch) == 0 and verify:
             print(f'Epoch {i // round(num_batch)}')
+            net.eval()
             validate(dataset, net, batch_size)
+            # validate(dataset, net, batch_size)
             net.train()
 
     if save_freq is not None and save_freq > 0:
@@ -176,7 +179,7 @@ def train(lr, batch_size, epochs, dataset, architecture, exp_id=None, sequence=N
 
 
 def validate(dataset, model, batch_size=128):
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    device = torch.device(dve if torch.cuda.is_available() else 'cpu')
     testset = utils.load_dataset(dataset, False)
     testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size,
                                              shuffle=False, num_workers=2, pin_memory=True)
@@ -196,29 +199,33 @@ def validate(dataset, model, batch_size=128):
 
 
 if __name__ == '__main__':
+
     parser = argparse.ArgumentParser()
-    parser.add_argument('--batch-size', type=int, default=128)
-    parser.add_argument('--lr', type=float, default=0.01)
-    parser.add_argument('--epochs', type=int, default=1)
+    parser.add_argument('--batch-size', type=int, default=16)
+    parser.add_argument('--lr', type=float, default=0.1)
+    parser.add_argument('--epochs', type=int, default=200)
     parser.add_argument('--dataset', type=str, default="CIFAR10")
     parser.add_argument('--model', type=str, default="resnet20",
                         help="models defined in model.py or any torchvision model.\n"
                              "Recommendation for CIFAR-10: resnet20/32/44/56/110/1202\n"
                              "Recommendation for CIFAR-100: resnet18/34/50/101/152"
                         )
-    parser.add_argument('--id', help='experiment id', type=str, default='test')
+    parser.add_argument('--id', help='experiment id', type=str, default='Batch100')
     parser.add_argument('--save-freq', type=int, default=100, help='frequence of saving checkpoints')
-    parser.add_argument('--num-gpu', type=int, default=torch.cuda.device_count())
-    parser.add_argument('--milestone', nargs='+', type=int, default=[100, 150])
-    parser.add_argument('--verify', type=int, default=0)
+    parser.add_argument('--num-gpu', type=int, default=1)
+    parser.add_argument('--milestone', nargs='+', type=int, default=[1000, 1500])
+    parser.add_argument('--verify', type=int, default=1)
     arg = parser.parse_args()
-
+    seed = 777
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    t1 = time.time()
     print(f'trying to allocate {arg.num_gpu} gpus')
-    try:
-        architecture = eval(f"custom_model.{arg.model}")
-    except:
-        architecture = eval(f"torchvision.models.{arg.model}")
+    dve = 'cuda:2'
+    architecture = eval(f"custom_model.{arg.model}")
     trained_model = train(arg.lr, arg.batch_size, arg.epochs, arg.dataset, architecture, exp_id=arg.id,
                           save_freq=arg.save_freq, num_gpu=arg.num_gpu, dec_lr=arg.milestone,
-                          verify=arg.verify, resume=True)
+                          verify=arg.verify, resume=False)
+    t2 = time.time()
+    print("Total time: ", t2-t1)
     validate(arg.dataset, trained_model)

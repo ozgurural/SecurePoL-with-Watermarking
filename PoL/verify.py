@@ -5,7 +5,7 @@ import numpy as np
 import torch
 import torchvision
 from functools import reduce
-
+from model import resnet50, _weights_init
 import utils
 from train import train
 import model as custom_model
@@ -43,7 +43,7 @@ def verify_all(dir, lr, batch_size, dataset, architecture, save_freq, order, thr
     dist_list = np.array(dist_list)
     for k in range(len(order)):
         print(f"Distance metric: {order[k]} || threshold: {threshold[k]}")
-        print(f"Average distance: {np.average(dist_list[k])}")
+        print(f"Average distance: {np.average(dist_list[k])}, Max distance: {np.max(dist_list[k])}, Min distance: {np.min(dist_list[k])}")
         above_threshold = np.sum(dist_list[k] > threshold[k])
         if above_threshold == 0:
             print("None of the steps is above the threshold, the proof-of-learning is valid.")
@@ -124,11 +124,13 @@ def verify_topq(dir, lr, batch_size, dataset, architecture, save_freq, order, th
 
 
 def verify_initialization(dir, architecture, threshold=0.01, net=None, verbose=True):
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-    if net is None:
-        net = architecture()
-        state = torch.load(os.path.join(dir, "model_step_0"))
-        net.load_state_dict(state['net'])
+    device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
+    # if net is None:
+    #     net = architecture()
+    #     state = torch.load(os.path.join(dir, "model_step_0"))
+    #     net.load_state_dict(state['net'])
+    net = resnet50()
+    net.apply(_weights_init)
     net.to(device)
     model_name = architecture.__name__
     if model_name in ['resnet20', 'resnet32', 'resnet44', 'resnet56', 'resnet110', 'resnet1202']:
@@ -152,12 +154,12 @@ def verify_initialization(dir, architecture, threshold=0.01, net=None, verbose=T
     elif model_type == 'resnet_cifar100':
         for name, param in net.named_parameters():
             if len(param.shape) == 4:
-                p_list.append(utils.check_weights_initialization(param, 'default'))
+                p_list.append(utils.check_weights_initialization(param, 'resnet_cifar'))
             elif 'weight' in name and 'fc' in name:
-                p_list.append(utils.check_weights_initialization(param, 'default'))
+                p_list.append(utils.check_weights_initialization(param, 'resnet_cifar'))
             elif 'bias' in name and ('fc' in name or 'linear' in name):
                 weight = net.state_dict()[name.replace('bias', 'weight')]
-                p_list.append(utils.check_weights_initialization([weight, param], 'default_bias'))
+                p_list.append(utils.check_weights_initialization([weight,param], 'default_bias'))
     elif model_type == 'resnet_cifar':
         for name, param in net.named_parameters():
             if 'fc' in name or 'conv' in name or 'linear' in name:
@@ -215,28 +217,29 @@ if __name__ == '__main__':
                              "Recommendation for CIFAR-10: resnet20/32/44/56/110/1202\n"
                              "Recommendation for CIFAR-100: resnet18/34/50/101/152"
                         )
-    parser.add_argument('--model-dir', help='path/to/the/proof', type=str, default='proof/CIFAR10_test')
-    parser.add_argument('--save-freq', type=int, default=100, help='frequence of saving checkpoints')
+    parser.add_argument('--model-dir', help='path/to/the/proof', type=str, default='proof/CIFAR10_Batch390')
+    parser.add_argument('--save-freq', type=int, default=390, help='frequence of saving checkpoints')
     parser.add_argument('--dist', type=str, nargs='+', default=['1', '2', 'inf', 'cos'],
                         help='metric for computing distance, cos, 1, 2, or inf')
-    parser.add_argument('--q', type=int, default=2, help="Set to >1 to enable top-q verification,"
+    parser.add_argument('--q', type=int, default=0, help="Set to >1 to enable top-q verification,"
                                                          "otherwise all steps will be verified.")
     parser.add_argument('--delta', type=float, default=[1000, 10, 0.1, 0.01],
                         help='threshold for verification')
 
     arg = parser.parse_args()
+    architecture = eval(f"custom_model.{arg.model}")
+    # try:
+    #     architecture = eval(f"custom_model.{arg.model}")
+    # except:
+    #     architecture = eval(f"torchvision.models.{arg.model}")
 
-    try:
-        architecture = eval(f"custom_model.{arg.model}")
-    except:
-        architecture = eval(f"torchvision.models.{arg.model}")
-
-    verify_initialization(arg.model_dir, architecture)
-    verify_hash(arg.model_dir, arg.dataset)
+    # verify_initialization(arg.model_dir, architecture)
+    # verify_hash(arg.model_dir, arg.dataset)
 
     if arg.q > 0:
-        verify_topq(arg.model_dir, arg.lr, arg.batch_size, arg.dataset, architecture, arg.save_freq,
+        res=verify_topq(arg.model_dir, arg.lr, arg.batch_size, arg.dataset, architecture, arg.save_freq,
                     arg.dist, arg.delta, arg.epochs, q=arg.q)
+        print("fin")
     else:
         verify_all(arg.model_dir, arg.lr, arg.batch_size, arg.dataset, architecture, arg.save_freq,
                    arg.dist, arg.delta)
