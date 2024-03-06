@@ -221,8 +221,8 @@ if __name__ == '__main__':
                         help='metric for computing distance, cos, 1, 2, or inf')
     parser.add_argument('--q', type=int, default=2, help="Set to >1 to enable top-q verification,"
                                                          "otherwise all steps will be verified.")
-    parser.add_argument('--delta', type=float, nargs='+', default=[1000, 10, 0.1, 0.01],
-                        help='thresholds for verification corresponding to each distance metric')
+    parser.add_argument('--delta', type=float, default=[1000, 10, 0.1, 0.01],
+                        help='threshold for verification')
 
     arg = parser.parse_args()
 

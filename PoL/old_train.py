@@ -7,7 +7,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torchvision
 from collections import OrderedDict
-import time
+
 import utils
 import model as custom_model
 
@@ -158,11 +158,10 @@ def train(lr, batch_size, epochs, dataset, architecture, exp_id=None, sequence=N
         optimizer.step()
         if scheduler is not None:
             scheduler.step()
-        # print(f'Epoch {i // round(num_batch)}')
+
         if i > 0 and i % round(num_batch) == 0 and verify:
             print(f'Epoch {i // round(num_batch)}')
             validate(dataset, net, batch_size)
-            # validate(dataset, net, batch_size)
             net.train()
 
     if save_freq is not None and save_freq > 0:
@@ -198,36 +197,28 @@ def validate(dataset, model, batch_size=128):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--batch-size', type=int, default=16)
-    parser.add_argument('--lr', type=float, default=0.1)
-    parser.add_argument('--epochs', type=int, default=200)
+    parser.add_argument('--batch-size', type=int, default=128)
+    parser.add_argument('--lr', type=float, default=0.01)
+    parser.add_argument('--epochs', type=int, default=1)
     parser.add_argument('--dataset', type=str, default="CIFAR10")
     parser.add_argument('--model', type=str, default="resnet20",
                         help="models defined in model.py or any torchvision model.\n"
                              "Recommendation for CIFAR-10: resnet20/32/44/56/110/1202\n"
                              "Recommendation for CIFAR-100: resnet18/34/50/101/152"
                         )
-    parser.add_argument('--id', help='experiment id', type=str, default='Batch100')
+    parser.add_argument('--id', help='experiment id', type=str, default='test')
     parser.add_argument('--save-freq', type=int, default=100, help='frequence of saving checkpoints')
     parser.add_argument('--num-gpu', type=int, default=torch.cuda.device_count())
-    parser.add_argument('--milestone', nargs='+', type=int, default=[1000, 1500])
-    parser.add_argument('--verify', type=int, default=1)
+    parser.add_argument('--milestone', nargs='+', type=int, default=[100, 150])
+    parser.add_argument('--verify', type=int, default=0)
     arg = parser.parse_args()
-    seed = 777
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    t1 = time.time()
+
     print(f'trying to allocate {arg.num_gpu} gpus')
-    dve = 'cuda:2'
-    # os.environ['CUDA_VISIBLE_DEVICES'] = "2"
-    architecture = eval(f"custom_model.{arg.model}")
-    # try:
-    #     architecture = eval(f"custom_model.{arg.model}")
-    # except:
-    #     architecture = eval(f"torchvision.models.{arg.model}")
+    try:
+        architecture = eval(f"custom_model.{arg.model}")
+    except:
+        architecture = eval(f"torchvision.models.{arg.model}")
     trained_model = train(arg.lr, arg.batch_size, arg.epochs, arg.dataset, architecture, exp_id=arg.id,
                           save_freq=arg.save_freq, num_gpu=arg.num_gpu, dec_lr=arg.milestone,
-                          verify=arg.verify, resume=False)
-    t2 = time.time()
-    print("Total time: ", t2-t1)
+                          verify=arg.verify, resume=True)
     validate(arg.dataset, trained_model)
