@@ -78,21 +78,7 @@ Total time:  1291.6162476539612
 Accuracy: 73.4 %
 Watermark embedding completed.
 
-(venv) PS C:\dev\phd-2024\Proof-of-Learning>  python PoL/verify.py --model-dir ./proof/CIFAR10_Batch100 --dist 1 2 inf cos --q 0
-Distance metric: 1 || threshold: 1000
-Average distance: 1312.5277099609375, Max distance: 1312.5277099609375, Min distance: 1312.5277099609375
-1 / 1 (100.0%) of the steps are above the threshold, the proof-of-learning is invalid.
-Distance metric: 2 || threshold: 10
-Average distance: 3.9775619506835938, Max distance: 3.9775619506835938, Min distance: 3.9775619506835938
-None of the steps is above the threshold, the proof-of-learning is valid.
-Distance metric: inf || threshold: 0.1
-Average distance: 0.13681060075759888, Max distance: 0.13681060075759888, Min distance: 0.13681060075759888
-1 / 1 (100.0%) of the steps are above the threshold, the proof-of-learning is invalid.
-Distance metric: cos || threshold: 0.01
-Average distance: 0.0038004517555236816, Max distance: 0.0038004517555236816, Min distance: 0.0038004517555236816
-None of the steps is above the threshold, the proof-of-learning is valid.
-
-venv) PS C:\dev\PhD-Dissertation> python PoL/verify.py --model-dir ./proof/CIFAR10_Batch100 --dist 1 2 inf cos --q 0
+(venv) PS C:\dev\PhD-Dissertation> python PoL/verify.py --model-dir ./proof/CIFAR10_Batch100 --dist 1 2 inf cos --q 0
 Distance metric: 1 || threshold: 1000
 Average distance: 2350.077635163714, Max distance: 6215.41259765625, Min distance: 1110.803466796875
 157 / 157 (100.0%) of the steps are above the threshold, the proof-of-learning is invalid.
@@ -107,10 +93,6 @@ Average distance: 0.009569743256660023, Max distance: 0.12412261962890625, Min d
 49 / 157 (31.210191082802545%) of the steps are above the threshold, the proof-of-learning is invalid.
 Watermark verification accuracy: 100.00%
 Watermark verification successful: The watermark is present in the model.
-
-
-
-(myenv) PS C:\dev\Adversarial-examples-for-Proof-of-Learning>
 ```
 
 ### Spoof
