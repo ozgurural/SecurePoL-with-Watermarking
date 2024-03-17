@@ -8,6 +8,8 @@ import torchvision.transforms as transforms
 
 def get_parameters(net, numpy=False):
     # get weights from a torch model as a list of numpy arrays
+    if type(net) is tuple:
+        net = net[0]
     parameter = torch.cat([i.data.reshape([-1]) for i in list(net.parameters())])
     if numpy:
         return parameter.cpu().numpy()
@@ -65,7 +67,7 @@ def parameter_distance(model1, model2, order=2, architecture=None, half=False):
             o = np.inf
         if o == 'cos' or o == 'cosine':
             res = (1 - torch.dot(weights1, weights2) /
-                   (torch.norm(weights1) * torch.norm(weights2))).cpu().numpy()
+                   (torch.norm(weights1) * torch.norm(weights1))).cpu().numpy()
         else:
             if o != np.inf:
                 try:
@@ -97,27 +99,23 @@ def load_dataset(dataset, train, download=False):
                 transforms.RandomRotation(15),
                 transforms.ToTensor(),
                 transforms.Normalize((0.5070751592371323, 0.48654887331495095, 0.4409178433670343),
-                                     (0.2673342858792401, 0.2564384629170883, 0.27615047132568404))
-                                 ])
+                                     (0.2673342858792401, 0.2564384629170883, 0.27615047132568404))])
         else:
             transform = transforms.Compose([
                 transforms.ToTensor(),
                 transforms.Normalize((0.5070751592371323, 0.48654887331495095, 0.4409178433670343),
-                                     (0.2673342858792401, 0.2564384629170883, 0.27615047132568404))
-            ])
+                                     (0.2673342858792401, 0.2564384629170883, 0.27615047132568404))])
     else:
         if train:
             transform = transforms.Compose([
                 transforms.RandomCrop(32, 4),
                 transforms.RandomHorizontalFlip(p=0.5),
                 transforms.ToTensor(),
-                transforms.Normalize(mean=[0.4914, 0.4822, 0.4465],std=[0.2023, 0.1994, 0.2010])
-            ])
+                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
         else:
             transform = transforms.Compose([
                 transforms.ToTensor(),
-                transforms.Normalize(mean=[0.4914, 0.4822, 0.4465],std=[0.2023, 0.1994, 0.2010])
-            ])
+                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
 
     data = dataset_class(root='./data', train=train, download=download, transform=transform)
     return data
@@ -155,7 +153,6 @@ def check_weights_initialization(param, method):
         weight, param = param
         fan_in, _ = nn.init._calculate_fan_in_and_fan_out(weight)
         bound = 1 / np.sqrt(fan_in)
-
         reference = torch.distributions.uniform.Uniform(-bound, bound).cdf
     else:
         raise NotImplementedError("Input initialization strategy is not implemented.")

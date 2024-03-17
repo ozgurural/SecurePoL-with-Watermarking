@@ -5,10 +5,12 @@ import numpy as np
 import torch
 import torchvision
 from functools import reduce
-
+from model import resnet20, _weights_init
 import utils
 from train import train
 import model as custom_model
+
+from watermark_verify import run_watermark_verification
 
 
 def verify_all(dir, lr, batch_size, dataset, architecture, save_freq, order, threshold, half=0):
@@ -43,7 +45,7 @@ def verify_all(dir, lr, batch_size, dataset, architecture, save_freq, order, thr
     dist_list = np.array(dist_list)
     for k in range(len(order)):
         print(f"Distance metric: {order[k]} || threshold: {threshold[k]}")
-        print(f"Average distance: {np.average(dist_list[k])}")
+        print(f"Average distance: {np.average(dist_list[k])}, Max distance: {np.max(dist_list[k])}, Min distance: {np.min(dist_list[k])}")
         above_threshold = np.sum(dist_list[k] > threshold[k])
         if above_threshold == 0:
             print("None of the steps is above the threshold, the proof-of-learning is valid.")
@@ -124,11 +126,13 @@ def verify_topq(dir, lr, batch_size, dataset, architecture, save_freq, order, th
 
 
 def verify_initialization(dir, architecture, threshold=0.01, net=None, verbose=True):
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-    if net is None:
-        net = architecture()
-        state = torch.load(os.path.join(dir, "model_step_0"))
-        net.load_state_dict(state['net'])
+    device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
+    # if net is None:
+    #     net = architecture()
+    #     state = torch.load(os.path.join(dir, "model_step_0"))
+    #     net.load_state_dict(state['net'])
+    net = resnet20()
+    net.apply(_weights_init)
     net.to(device)
     model_name = architecture.__name__
     if model_name in ['resnet20', 'resnet32', 'resnet44', 'resnet56', 'resnet110', 'resnet1202']:
@@ -211,28 +215,29 @@ if __name__ == '__main__':
     parser.add_argument('--epochs', type=int, default=2)
     parser.add_argument('--dataset', type=str, default="CIFAR10")
     parser.add_argument('--model', type=str, default="resnet20",
-                        help="models defined in model.py or any torchvision model.\n"
+                        help="Models defined in model.py or any torchvision model.\n"
                              "Recommendation for CIFAR-10: resnet20/32/44/56/110/1202\n"
-                             "Recommendation for CIFAR-100: resnet18/34/50/101/152"
-                        )
-    parser.add_argument('--model-dir', help='path/to/the/proof', type=str, default='proof/CIFAR10_test')
-    parser.add_argument('--save-freq', type=int, default=100, help='frequence of saving checkpoints')
+                             "Recommendation for CIFAR-100: resnet18/34/50/101/152")
+    parser.add_argument('--model-dir', help='Path to the model directory', type=str, default='proof/CIFAR10_test')
+    parser.add_argument('--save-freq', type=int, default=100, help='Frequency of saving checkpoints')
     parser.add_argument('--dist', type=str, nargs='+', default=['1', '2', 'inf', 'cos'],
-                        help='metric for computing distance, cos, 1, 2, or inf')
-    parser.add_argument('--q', type=int, default=2, help="Set to >1 to enable top-q verification,"
+                        help='Metric for computing distance, cos, 1, 2, or inf')
+    parser.add_argument('--q', type=int, default=0, help="Set to >1 to enable top-q verification,"
                                                          "otherwise all steps will be verified.")
-    parser.add_argument('--delta', type=float, nargs='+', default=[1000, 10, 0.1, 0.01],
-                        help='thresholds for verification corresponding to each distance metric')
+    parser.add_argument('--delta', type=float, default=[1000, 10, 0.1, 0.01],
+                        help='threshold for verification')
+    parser.add_argument('--watermark-path', help='Path to the watermarked model', type=str, default='model_with_watermark.pth')
+
 
     arg = parser.parse_args()
+    architecture = eval(f"custom_model.{arg.model}")
+    # try:
+    #     architecture = eval(f"custom_model.{arg.model}")
+    # except:
+    #     architecture = eval(f"torchvision.models.{arg.model}")
 
-    try:
-        architecture = eval(f"custom_model.{arg.model}")
-    except:
-        architecture = eval(f"torchvision.models.{arg.model}")
-
-    verify_initialization(arg.model_dir, architecture)
-    verify_hash(arg.model_dir, arg.dataset)
+    # verify_initialization(arg.model_dir, architecture)
+    # verify_hash(arg.model_dir, arg.dataset)
 
     if arg.q > 0:
         verify_topq(arg.model_dir, arg.lr, arg.batch_size, arg.dataset, architecture, arg.save_freq,
@@ -240,3 +245,9 @@ if __name__ == '__main__':
     else:
         verify_all(arg.model_dir, arg.lr, arg.batch_size, arg.dataset, architecture, arg.save_freq,
                    arg.dist, arg.delta)
+
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    model_path = "model_with_watermark.pth"
+
+    # Call the watermark verification function
+    run_watermark_verification(model_path, arg.model, device)

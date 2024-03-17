@@ -11,6 +11,8 @@ import time
 import utils
 import model as custom_model
 
+from watermark_train import run_watermark_embedding
+
 
 def train(lr, batch_size, epochs, dataset, architecture, exp_id=None, sequence=None,
           model_dir=None, save_freq=None, num_gpu=torch.cuda.device_count(), verify=False, dec_lr=None,
@@ -161,6 +163,7 @@ def train(lr, batch_size, epochs, dataset, architecture, exp_id=None, sequence=N
         # print(f'Epoch {i // round(num_batch)}')
         if i > 0 and i % round(num_batch) == 0 and verify:
             print(f'Epoch {i // round(num_batch)}')
+            net.eval()
             validate(dataset, net, batch_size)
             # validate(dataset, net, batch_size)
             net.train()
@@ -173,7 +176,7 @@ def train(lr, batch_size, epochs, dataset, architecture, exp_id=None, sequence=N
             state['scheduler'] = scheduler.state_dict()
         torch.save(state, os.path.join(save_dir, f"model_step_{num_step}"))
 
-    return net
+    return net, optimizer, criterion
 
 
 def validate(dataset, model, batch_size=128):
@@ -225,9 +228,15 @@ if __name__ == '__main__':
     #     architecture = eval(f"custom_model.{arg.model}")
     # except:
     #     architecture = eval(f"torchvision.models.{arg.model}")
-    trained_model = train(arg.lr, arg.batch_size, arg.epochs, arg.dataset, architecture, exp_id=arg.id,
+    trained_model, optimizer, criterion = train(arg.lr, arg.batch_size, arg.epochs, arg.dataset, architecture, exp_id=arg.id,
                           save_freq=arg.save_freq, num_gpu=arg.num_gpu, dec_lr=arg.milestone,
                           verify=arg.verify, resume=False)
     t2 = time.time()
     print("Total time: ", t2-t1)
     validate(arg.dataset, trained_model)
+    run_watermark_embedding(trained_model, optimizer, criterion)
+    print("Watermark embedding completed.")
+    # Save the model with the embedded watermark
+    model_path_with_watermark = 'model_with_watermark.pth'
+    torch.save(trained_model.state_dict(), model_path_with_watermark)
+    print(f"Model with watermark saved at {model_path_with_watermark}")
