@@ -163,7 +163,7 @@ def train(lr, batch_size, epochs, dataset, architecture, exp_id=None, sequence=N
         # print(f'Epoch {i // round(num_batch)}')
         if i > 0 and i % round(num_batch) == 0 and verify:
             print(f'Epoch {i // round(num_batch)}')
-            net.eval()
+            #net.eval()
             validate(dataset, net, batch_size)
             # validate(dataset, net, batch_size)
             net.train()

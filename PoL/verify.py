@@ -126,13 +126,11 @@ def verify_topq(dir, lr, batch_size, dataset, architecture, save_freq, order, th
 
 
 def verify_initialization(dir, architecture, threshold=0.01, net=None, verbose=True):
-    device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
-    # if net is None:
-    #     net = architecture()
-    #     state = torch.load(os.path.join(dir, "model_step_0"))
-    #     net.load_state_dict(state['net'])
-    net = resnet20()
-    net.apply(_weights_init)
+    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    if net is None:
+        net = architecture()
+        state = torch.load(os.path.join(dir, "model_step_0"))
+        net.load_state_dict(state['net'])
     net.to(device)
     model_name = architecture.__name__
     if model_name in ['resnet20', 'resnet32', 'resnet44', 'resnet56', 'resnet110', 'resnet1202']:
@@ -222,9 +220,9 @@ if __name__ == '__main__':
     parser.add_argument('--save-freq', type=int, default=100, help='Frequency of saving checkpoints')
     parser.add_argument('--dist', type=str, nargs='+', default=['1', '2', 'inf', 'cos'],
                         help='Metric for computing distance, cos, 1, 2, or inf')
-    parser.add_argument('--q', type=int, default=0, help="Set to >1 to enable top-q verification,"
+    parser.add_argument('--q', type=int, default=2, help="Set to >1 to enable top-q verification,"
                                                          "otherwise all steps will be verified.")
-    parser.add_argument('--delta', type=float, default=[1000, 10, 0.1, 0.01],
+    parser.add_argument('--delta', type=float, nargs='+', default=[1000, 10, 0.1, 0.01],
                         help='threshold for verification')
     parser.add_argument('--watermark-path', help='Path to the watermarked model', type=str, default='model_with_watermark.pth')
 
@@ -236,8 +234,8 @@ if __name__ == '__main__':
     # except:
     #     architecture = eval(f"torchvision.models.{arg.model}")
 
-    # verify_initialization(arg.model_dir, architecture)
-    # verify_hash(arg.model_dir, arg.dataset)
+    verify_initialization(arg.model_dir, architecture)
+    verify_hash(arg.model_dir, arg.dataset)
 
     if arg.q > 0:
         verify_topq(arg.model_dir, arg.lr, arg.batch_size, arg.dataset, architecture, arg.save_freq,
