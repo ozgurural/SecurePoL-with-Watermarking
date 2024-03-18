@@ -62,31 +62,37 @@ PS C:\dev\PhD-Dissertation> python -m venv venv
 PS C:\dev\PhD-Dissertation> .\venv\Scripts\activate
 (venv) PS C:\dev\PhD-Dissertation> pip install torch==1.8.0 torchvision==0.9.0 numpy scipy requests
 (venv) PS C:\dev\PhD-Dissertation> python PoL/train.py --save-freq 100 --dataset CIFAR10 --model resnet20 --epochs 5
-trying to allocate 1 gpus
+trying to allocate 0 gpus
+Downloading https://www.cs.toronto.edu/~kriz/cifar-10-python.tar.gz to ./data\cifar-10-python.tar.gz
+170499072it [00:13, 12206143.66it/s]                                                                                                                                                                                               
+Extracting ./data\cifar-10-python.tar.gz to ./data
 Epoch 1
-Accuracy: 47.83 %
+Accuracy: 52.72 %
 Epoch 2
-Accuracy: 61.65 %
+Accuracy: 62.15 %
 Epoch 3
-Accuracy: 70.57 %
+Accuracy: 66.72 %
 Epoch 4
-Accuracy: 69.78 %
-Total time:  1822.553815126419
-Accuracy: 68.68 %
-(venv) PS C:\dev\phd-2024\Proof-of-Learning>  python PoL/verify.py --model-dir ./proof/CIFAR10_Batch100 --dist 1 2 inf cos --q 0
+Accuracy: 70.66 %
+Total time:  1291.6162476539612
+Accuracy: 73.4 %
+Watermark embedding completed.
+
+(venv) PS C:\dev\PhD-Dissertation> python PoL/verify.py --model-dir ./proof/CIFAR10_Batch100 --dist 1 2 inf cos --q 0
 Distance metric: 1 || threshold: 1000
-Average distance: 1312.5277099609375, Max distance: 1312.5277099609375, Min distance: 1312.5277099609375
-1 / 1 (100.0%) of the steps are above the threshold, the proof-of-learning is invalid.
+Average distance: 2350.077635163714, Max distance: 6215.41259765625, Min distance: 1110.803466796875
+157 / 157 (100.0%) of the steps are above the threshold, the proof-of-learning is invalid.
 Distance metric: 2 || threshold: 10
-Average distance: 3.9775619506835938, Max distance: 3.9775619506835938, Min distance: 3.9775619506835938
+Average distance: 7.196670972617569, Max distance: 18.77461814880371, Min distance: 4.060060501098633
 None of the steps is above the threshold, the proof-of-learning is valid.
 Distance metric: inf || threshold: 0.1
-Average distance: 0.13681060075759888, Max distance: 0.13681060075759888, Min distance: 0.13681060075759888
-1 / 1 (100.0%) of the steps are above the threshold, the proof-of-learning is invalid.
+Average distance: 0.36326568331688075, Max distance: 0.8808183670043945, Min distance: 0.25939446687698364
+157 / 157 (100.0%) of the steps are above the threshold, the proof-of-learning is invalid.
 Distance metric: cos || threshold: 0.01
-Average distance: 0.0038004517555236816, Max distance: 0.0038004517555236816, Min distance: 0.0038004517555236816
-None of the steps is above the threshold, the proof-of-learning is valid.
-(myenv) PS C:\dev\Adversarial-examples-for-Proof-of-Learning>
+Average distance: 0.009569743256660023, Max distance: 0.12412261962890625, Min distance: 0.0015922188758850098
+49 / 157 (31.210191082802545%) of the steps are above the threshold, the proof-of-learning is invalid.
+Watermark verification accuracy: 100.00%
+Watermark verification successful: The watermark is present in the model.
 ```
 
 ### Spoof
