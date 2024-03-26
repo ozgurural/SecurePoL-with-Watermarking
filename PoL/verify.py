@@ -222,7 +222,7 @@ if __name__ == '__main__':
                         help='Metric for computing distance, cos, 1, 2, or inf')
     parser.add_argument('--q', type=int, default=2, help="Set to >1 to enable top-q verification,"
                                                          "otherwise all steps will be verified.")
-    parser.add_argument('--delta', type=float, nargs='+', default=[1000, 10, 0.1, 0.01],
+    parser.add_argument('--delta', type=float, nargs='+', default=[10000, 100, 1, 0.1],
                         help='threshold for verification')
     parser.add_argument('--watermark-path', help='Path to the watermarked model', type=str, default='model_with_watermark.pth')
 

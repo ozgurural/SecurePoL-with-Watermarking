@@ -78,21 +78,38 @@ Total time:  1291.6162476539612
 Accuracy: 73.4 %
 Watermark embedding completed.
 
-(venv) PS C:\dev\PhD-Dissertation> python PoL/verify.py --model-dir ./proof/CIFAR10_Batch100 --dist 1 2 inf cos --q 0
-Distance metric: 1 || threshold: 1000
-Average distance: 2350.077635163714, Max distance: 6215.41259765625, Min distance: 1110.803466796875
-157 / 157 (100.0%) of the steps are above the threshold, the proof-of-learning is invalid.
-Distance metric: 2 || threshold: 10
-Average distance: 7.196670972617569, Max distance: 18.77461814880371, Min distance: 4.060060501098633
+(venv) PS C:\dev\PhD-Dissertation> python PoL/verify.py --model-dir ./proof/CIFAR10_Batch100 --dist 1 2 inf cos --q 2
+The proof-of-learning passed the initialization verification.
+Hash of the proof is valid.
+Verifying epoch 1/2
+Distance metric: 1 || threshold: 10000 || Q=2
+Average top-q distance: 2884.6951904296875
 None of the steps is above the threshold, the proof-of-learning is valid.
-Distance metric: inf || threshold: 0.1
-Average distance: 0.36326568331688075, Max distance: 0.8808183670043945, Min distance: 0.25939446687698364
-157 / 157 (100.0%) of the steps are above the threshold, the proof-of-learning is invalid.
-Distance metric: cos || threshold: 0.01
-Average distance: 0.009569743256660023, Max distance: 0.12412261962890625, Min distance: 0.0015922188758850098
-49 / 157 (31.210191082802545%) of the steps are above the threshold, the proof-of-learning is invalid.
+Distance metric: 2 || threshold: 100 || Q=2
+Average top-q distance: 9.377471566200256
+None of the steps is above the threshold, the proof-of-learning is valid.
+Distance metric: inf || threshold: 1 || Q=2
+Average top-q distance: 0.5393916815519333
+None of the steps is above the threshold, the proof-of-learning is valid.
+Distance metric: cos || threshold: 0.1 || Q=2
+Average top-q distance: 0.027133792638778687
+None of the steps is above the threshold, the proof-of-learning is valid.
+Verifying epoch 2/2
+Distance metric: 1 || threshold: 10000 || Q=2
+Average top-q distance: 2165.276318359375
+None of the steps is above the threshold, the proof-of-learning is valid.
+Distance metric: 2 || threshold: 100 || Q=2
+Average top-q distance: 6.9154260635375975
+None of the steps is above the threshold, the proof-of-learning is valid.
+Distance metric: inf || threshold: 1 || Q=2
+Average top-q distance: 0.3927684545516968
+None of the steps is above the threshold, the proof-of-learning is valid.
+Distance metric: cos || threshold: 0.1 || Q=2
+Average top-q distance: 0.006616342067718506
+None of the steps is above the threshold, the proof-of-learning is valid.
 Watermark verification accuracy: 100.00%
 Watermark verification successful: The watermark is present in the model.
+
 ```
 
 ### Spoof
