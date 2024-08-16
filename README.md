@@ -57,59 +57,60 @@ Please ensure lr, batch-size, epochs, dataset, model, and save-freq are consiste
 
 ### Run Sample
 
+After encountering challenges related to a significant drop in model accuracy post-watermark embedding, I have made a key modification to our training approach.
+Previously, our approach to embedding watermarks involved training the model solely on watermark data in a separate phase from the main task training. This method, while effective in embedding the watermark significantly impacting its performance on the primary task. Instead of separately training the model on watermark data, I integrated the watermark directly into the training batches with the original dataset. This ensures the model learns both tasks simultaneously, maintaining high performance on its primary task while effectively embedding the watermark.
+
+To show more information about the training and verification process, I would like to share log information with you below.
+
+Firstly, I run the train code. That code successfully trains the model and increases the accuracy while adding model watermarking and generating Proof of Learning data.
+
 ```bash
-PS C:\dev\PhD-Dissertation> python -m venv venv
-PS C:\dev\PhD-Dissertation> .\venv\Scripts\activate
-(venv) PS C:\dev\PhD-Dissertation> pip install torch==1.8.0 torchvision==0.9.0 numpy scipy requests
-(venv) PS C:\dev\PhD-Dissertation> python PoL/train.py --save-freq 100 --dataset CIFAR10 --model resnet20 --epochs 5
-trying to allocate 0 gpus
-Downloading https://www.cs.toronto.edu/~kriz/cifar-10-python.tar.gz to ./data\cifar-10-python.tar.gz
-170499072it [00:13, 12206143.66it/s]                                                                                                                                                                                               
-Extracting ./data\cifar-10-python.tar.gz to ./data
-Epoch 1
-Accuracy: 52.72 %
-Epoch 2
-Accuracy: 62.15 %
-Epoch 3
-Accuracy: 66.72 %
-Epoch 4
-Accuracy: 70.66 %
-Total time:  1291.6162476539612
-Accuracy: 73.4 %
-Watermark embedding completed.
+(venv) PS C:\dev\PhD-Dissertation> python PoL/train.py --save-freq 100 --dataset CIFAR10 --model resnet20 --epochs 2
+2024-03-31 22:51:11,377 - INFO - trying to allocate 0 gpus
+2024-03-31 22:51:11,377 - INFO - Training started.
+2024-03-31 22:51:11,377 - INFO - Using device: cpu
+2024-03-31 22:51:11,951 - INFO - Loaded dataset 'CIFAR10' with 50000 samples.
+2024-03-31 22:51:11,962 - INFO - Model architecture: resnet20
+2024-03-31 22:51:11,962 - INFO - Optimizer: SGD
+2024-03-31 22:57:56,140 - INFO - Verifying at step 3125
+2024-03-31 22:58:09,044 - INFO - Accuracy: 45.79 %
+2024-03-31 23:04:43,313 - INFO - Training completed.
+2024-03-31 23:04:43,334 - INFO - Starting watermark validation.
+2024-03-31 23:04:43,447 - INFO - Watermark validation accuracy: 100.00%
+2024-03-31 23:04:58,705 - INFO - Accuracy: 58.77 %
+2024-03-31 23:04:58,713 - INFO - Model with watermark saved at model_with_watermark.pth
+2024-03-31 23:04:58,713 - INFO - Total time: 827.3360908031464
+```
+Secondly, I run the Proof of Learning Verification code. That code successfully verifies Proof of Learning and also verifies the watermark added at the training phase.
 
+```bash
 (venv) PS C:\dev\PhD-Dissertation> python PoL/verify.py --model-dir ./proof/CIFAR10_Batch100 --dist 1 2 inf cos --q 2
-The proof-of-learning passed the initialization verification.
-Hash of the proof is valid.
-Verifying epoch 1/2
-Distance metric: 1 || threshold: 10000 || Q=2
-Average top-q distance: 2884.6951904296875
-None of the steps is above the threshold, the proof-of-learning is valid.
-Distance metric: 2 || threshold: 100 || Q=2
-Average top-q distance: 9.377471566200256
-None of the steps is above the threshold, the proof-of-learning is valid.
-Distance metric: inf || threshold: 1 || Q=2
-Average top-q distance: 0.5393916815519333
-None of the steps is above the threshold, the proof-of-learning is valid.
-Distance metric: cos || threshold: 0.1 || Q=2
-Average top-q distance: 0.027133792638778687
-None of the steps is above the threshold, the proof-of-learning is valid.
-Verifying epoch 2/2
-Distance metric: 1 || threshold: 10000 || Q=2
-Average top-q distance: 2165.276318359375
-None of the steps is above the threshold, the proof-of-learning is valid.
-Distance metric: 2 || threshold: 100 || Q=2
-Average top-q distance: 6.9154260635375975
-None of the steps is above the threshold, the proof-of-learning is valid.
-Distance metric: inf || threshold: 1 || Q=2
-Average top-q distance: 0.3927684545516968
-None of the steps is above the threshold, the proof-of-learning is valid.
-Distance metric: cos || threshold: 0.1 || Q=2
-Average top-q distance: 0.006616342067718506
-None of the steps is above the threshold, the proof-of-learning is valid.
-Watermark verification accuracy: 100.00%
-Watermark verification successful: The watermark is present in the model.
-
+2024-03-31 23:32:11,715 - INFO - Starting the verification process...
+2024-03-31 23:32:11,715 - INFO - Verifying model initialization...
+2024-03-31 23:32:11,782 - INFO - The proof-of-learning passed the initialization verification.
+2024-03-31 23:32:26,324 - INFO - Hash of the proof is valid.
+2024-03-31 23:32:26,334 - INFO - Performing top-q verification...
+2024-03-31 23:32:26,335 - INFO - Verifying epoch 1/2
+2024-03-31 23:33:03,355 - INFO - Verifying epoch 2/2
+2024-03-31 23:33:31,228 - INFO - Using device: cpu
+2024-03-31 23:33:31,868 - INFO - Loaded dataset 'CIFAR10' with 50000 samples.
+2024-03-31 23:33:31,883 - INFO - Model architecture: resnet20
+2024-03-31 23:33:31,883 - INFO - Optimizer: SGD
+2024-03-31 23:33:39,794 - INFO - Distance metric: 1 || threshold: 10000 || Q=2
+2024-03-31 23:33:39,794 - INFO - Average top-q distance: 1501.8302001953125
+2024-03-31 23:33:39,794 - INFO - None of the steps is above the threshold, the proof-of-learning is valid.
+2024-03-31 23:33:39,794 - INFO - Distance metric: 2 || threshold: 100 || Q=2
+2024-03-31 23:33:39,796 - INFO - Average top-q distance: 5.058361053466797
+2024-03-31 23:33:39,796 - INFO - None of the steps is above the threshold, the proof-of-learning is valid.
+2024-03-31 23:33:39,796 - INFO - Distance metric: inf || threshold: 1 || Q=2
+2024-03-31 23:33:39,796 - INFO - Average top-q distance: 0.3334674760699272
+2024-03-31 23:33:39,796 - INFO - None of the steps is above the threshold, the proof-of-learning is valid.
+2024-03-31 23:33:39,797 - INFO - Distance metric: cos || threshold: 0.1 || Q=2
+2024-03-31 23:33:39,797 - INFO - Average top-q distance: 0.00472550094127655
+2024-03-31 23:33:39,797 - INFO - None of the steps is above the threshold, the proof-of-learning is valid.
+2024-03-31 23:33:39,799 - INFO - Verifying watermark presence in the model...
+2024-03-31 23:33:39,921 - INFO - Watermark verification accuracy: 100.00%
+2024-03-31 23:33:39,922 - INFO - Watermark verification successful: The watermark is present in the model.
 ```
 
 ### Spoof

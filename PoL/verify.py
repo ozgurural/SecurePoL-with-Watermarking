@@ -3,14 +3,19 @@ import os
 import hashlib
 import numpy as np
 import torch
+import logging
 import torchvision
 from functools import reduce
-from model import resnet20, _weights_init
+from model import resnet20, _weights_init # Update this import based on your models
 import utils
 from train import train
 import model as custom_model
 
-from watermark_verify import run_watermark_verification
+from watermark_verify import run_watermark_verification, prepare_watermark_data
+
+# Set up basic logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s: %(message)s')
+
 
 
 def verify_all(dir, lr, batch_size, dataset, architecture, save_freq, order, threshold, half=0):
@@ -44,13 +49,13 @@ def verify_all(dir, lr, batch_size, dataset, architecture, save_freq, order, thr
 
     dist_list = np.array(dist_list)
     for k in range(len(order)):
-        print(f"Distance metric: {order[k]} || threshold: {threshold[k]}")
-        print(f"Average distance: {np.average(dist_list[k])}, Max distance: {np.max(dist_list[k])}, Min distance: {np.min(dist_list[k])}")
+        logging.info(f"Distance metric: {order[k]} || threshold: {threshold[k]}")
+        logging.info(f"Average distance: {np.average(dist_list[k])}, Max distance: {np.max(dist_list[k])}, Min distance: {np.min(dist_list[k])}")
         above_threshold = np.sum(dist_list[k] > threshold[k])
         if above_threshold == 0:
-            print("None of the steps is above the threshold, the proof-of-learning is valid.")
+            logging.info("None of the steps is above the threshold, the proof-of-learning is valid.")
         else:
-            print(f"{above_threshold} / {dist_list[k].shape[0]} "
+            logging.info(f"{above_threshold} / {dist_list[k].shape[0]} "
                   f"({100 * np.average(dist_list[k] > threshold[k])}%) "
                   f"of the steps are above the threshold, the proof-of-learning is invalid.")
     return dist_list
@@ -71,7 +76,7 @@ def verify_topq(dir, lr, batch_size, dataset, architecture, save_freq, order, th
     res = []
 
     for epoch in range(epochs):
-        print(f"Verifying epoch {epoch + 1}/{epochs}")
+        logging.info(f"Verifying epoch {epoch + 1}/{epochs}")
         start = np.round(ckpt_per_epoch * epoch).__int__()
         end = np.round(ckpt_per_epoch * (epoch + 1)).__int__()
         dist_list = [[] for i in range(len(order))]
@@ -112,13 +117,13 @@ def verify_topq(dir, lr, batch_size, dataset, architecture, save_freq, order, th
 
         dist_list = np.array(dist_list)
         for k in range(len(order)):
-            print(f"Distance metric: {order[k]} || threshold: {threshold[k]} || Q={q}")
-            print(f"Average top-q distance: {np.average(dist_list[k])}")
+            logging.info(f"Distance metric: {order[k]} || threshold: {threshold[k]} || Q={q}")
+            logging.info(f"Average top-q distance: {np.average(dist_list[k])}")
             above_threshold = np.sum(dist_list[k] > threshold[k])
             if above_threshold == 0:
-                print("None of the steps is above the threshold, the proof-of-learning is valid.")
+                logging.info("None of the steps is above the threshold, the proof-of-learning is valid.")
             else:
-                print(f"{above_threshold} / {dist_list[k].shape[0]} "
+                logging.info(f"{above_threshold} / {dist_list[k].shape[0]} "
                       f"({100 * np.average(dist_list[k] > threshold[k])}%)"
                       f" of the steps are above the threshold, the proof-of-learning is invalid.")
         res.append(dist_list)
@@ -179,11 +184,11 @@ def verify_initialization(dir, architecture, threshold=0.01, net=None, verbose=T
 
     if verbose:
         if np.min(p_list) < threshold:
-            print(f"The initialized weights does not follow the initialization strategy."
+            logging.info(f"The initialized weights does not follow the initialization strategy."
                   f"The minimum p value is {np.min(p_list)} < threshold ({threshold})."
                   f"The proof-of-learning is not valid.")
         else:
-            print("The proof-of-learning passed the initialization verification.")
+            logging.info("The proof-of-learning passed the initialization verification.")
     return p_list
 
 
@@ -201,13 +206,13 @@ def verify_hash(dir, dataset):
         m.update(d.__str__().encode('utf-8'))
 
     if hash != m.hexdigest():
-        print("Hash doesn't match. The proof is invalid")
+        logging.info("Hash doesn't match. The proof is invalid")
     else:
-        print("Hash of the proof is valid.")
+        logging.info("Hash of the proof is valid.")
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description="Model and Watermark Verification Script")
     parser.add_argument('--batch-size', type=int, default=128)
     parser.add_argument('--lr', type=float, default=0.01)
     parser.add_argument('--epochs', type=int, default=2)
@@ -234,16 +239,21 @@ if __name__ == '__main__':
     # except:
     #     architecture = eval(f"torchvision.models.{arg.model}")
 
+    logging.info("Starting the verification process...")
+    logging.info("Verifying model initialization...")
     verify_initialization(arg.model_dir, architecture)
     verify_hash(arg.model_dir, arg.dataset)
 
     if arg.q > 0:
+        logging.info("Performing top-q verification...")
         verify_topq(arg.model_dir, arg.lr, arg.batch_size, arg.dataset, architecture, arg.save_freq,
                     arg.dist, arg.delta, arg.epochs, q=arg.q)
     else:
+        logging.info("Performing full verification...")
         verify_all(arg.model_dir, arg.lr, arg.batch_size, arg.dataset, architecture, arg.save_freq,
                    arg.dist, arg.delta)
 
+    logging.info("Verifying watermark presence in the model...")
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     model_path = "model_with_watermark.pth"
 

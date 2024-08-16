@@ -9,15 +9,22 @@ import torchvision
 from collections import OrderedDict
 import time
 import utils
+import logging
 import model as custom_model
 
-from watermark_train import run_watermark_embedding
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+
+from watermark_train import prepare_watermark_data, \
+    validate_watermark  # Make sure this is available and correctly implemented
 
 
 def train(lr, batch_size, epochs, dataset, architecture, exp_id=None, sequence=None,
           model_dir=None, save_freq=None, num_gpu=torch.cuda.device_count(), verify=False, dec_lr=None,
           half=False, resume=False):
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    logging.info(f"Using device: {device}")
 
     if sequence is not None or model_dir is not None:
         resume = False
@@ -38,7 +45,7 @@ def train(lr, batch_size, epochs, dataset, architecture, exp_id=None, sequence=N
         optimizer = optim.SGD(net.parameters(), lr=lr)
         scheduler = None
     elif dataset == 'CIFAR10':
-        if dec_lr is None:
+        if dec_lr is None: 
             dec_lr = [100, 150]
         optimizer = optim.SGD(net.parameters(), lr=lr, momentum=0.9, weight_decay=1e-4)
         scheduler = optim.lr_scheduler.MultiStepLR(optimizer,
@@ -54,6 +61,9 @@ def train(lr, batch_size, epochs, dataset, architecture, exp_id=None, sequence=N
     else:
         optimizer = optim.Adam(net.parameters(), lr=lr)
         scheduler = None
+
+    # Log dataset size
+    logging.info(f"Loaded dataset '{dataset}' with {len(trainset)} samples.")
 
     criterion = torch.nn.CrossEntropyLoss().to(device)
 
@@ -116,9 +126,9 @@ def train(lr, batch_size, epochs, dataset, architecture, exp_id=None, sequence=N
                                 scheduler = None
                         sequence = np.load(os.path.join(save_dir, "indices.npy"))
                         sequence = sequence[ind:]
-                        print('resume training')
+                        logging.info('resume training')
                 except:
-                    print('resume failed')
+                    logging.error('resume failed')
                     pass
                 if ind == -1:
                     ind = None
@@ -130,6 +140,15 @@ def train(lr, batch_size, epochs, dataset, architecture, exp_id=None, sequence=N
     sequence = np.reshape(sequence, -1)
     subset = torch.utils.data.Subset(trainset, sequence)
     trainloader = torch.utils.data.DataLoader(subset, batch_size=batch_size, num_workers=0, pin_memory=True)
+
+    # Prepare watermark data
+    watermark_loader = prepare_watermark_data()
+    watermark_iter = iter(watermark_loader)
+
+    # Log model and optimizer details
+    logging.info(f"Model architecture: {architecture.__name__}")
+    logging.info(f"Optimizer: {'SGD' if dataset in ['CIFAR10', 'CIFAR100'] else 'Adam'}")
+
     net.train()
 
     if save_freq is not None and save_freq > 0:
@@ -140,32 +159,47 @@ def train(lr, batch_size, epochs, dataset, architecture, exp_id=None, sequence=N
         f.write(m.hexdigest())
         f.close()
 
-    for i, data in enumerate(trainloader, 0):
-        if save_freq is not None and i % save_freq == 0 and save_freq > 0:
-            # save the checkpoints every save_freq iterations
-            state = {'net': net.state_dict(),
-                     'optimizer': optimizer.state_dict()}
-            if scheduler is not None:
-                state['scheduler'] = scheduler.state_dict()
-            if ind is None:
-                torch.save(state, os.path.join(save_dir, f"model_step_{i}"))
-            else:
-                torch.save(state, os.path.join(save_dir, f"model_step_{i+ind}"))
+    for i, (inputs, labels) in enumerate(trainloader):
+        inputs, labels = inputs.to(device), labels.to(device)
 
-        inputs, labels = data[0].to(device), data[1].to(device)
+        # Check if it's time to save a checkpoint
+        if save_freq is not None and i % save_freq == 0:
+
+            checkpoint_state = {
+                'net': net.state_dict(),
+                'optimizer': optimizer.state_dict(),
+                'scheduler': scheduler.state_dict() if scheduler is not None else None,
+            }
+            checkpoint_path = os.path.join(save_dir, f"model_step_{i + (ind if ind is not None else 0)}")
+            torch.save(checkpoint_state, checkpoint_path)
+
+        # Integrate watermarking directly into each batch
+        try:
+            wm_inputs, wm_labels = next(watermark_iter)
+        except StopIteration:
+            # Reset the iterator if all watermark samples have been used
+            watermark_iter = iter(watermark_loader)
+            wm_inputs, wm_labels = next(watermark_iter)
+
+        wm_inputs, wm_labels = wm_inputs.to(device), wm_labels.to(device)
+
+        # Combine training data with watermark data
+        combined_inputs = torch.cat([inputs, wm_inputs], dim=0)
+        combined_labels = torch.cat([labels, wm_labels], dim=0)
+
         optimizer.zero_grad()
-        outputs = net(inputs)
-        loss = criterion(outputs, labels)
+        outputs = net(combined_inputs)
+        loss = criterion(outputs, combined_labels)
         loss.backward()
         optimizer.step()
+
         if scheduler is not None:
             scheduler.step()
-        # print(f'Epoch {i // round(num_batch)}')
-        if i > 0 and i % round(num_batch) == 0 and verify:
-            print(f'Epoch {i // round(num_batch)}')
-            #net.eval()
+
+        # Optional verification/validation at specific intervals
+        if verify and i > 0 and i % round(num_batch) == 0:
+            logging.info(f'Verifying at step {i}')
             validate(dataset, net, batch_size)
-            # validate(dataset, net, batch_size)
             net.train()
 
     if save_freq is not None and save_freq > 0:
@@ -195,7 +229,7 @@ def validate(dataset, model, batch_size=128):
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
 
-    print(f'Accuracy: {100 * correct / total} %')
+    logging.info(f'Accuracy: {100 * correct / total} %')
     return correct / total
 
 
@@ -220,7 +254,7 @@ if __name__ == '__main__':
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
     t1 = time.time()
-    print(f'trying to allocate {arg.num_gpu} gpus')
+    logging.info(f'trying to allocate {arg.num_gpu} gpus')
     dve = 'cuda:2'
     # os.environ['CUDA_VISIBLE_DEVICES'] = "2"
     architecture = eval(f"custom_model.{arg.model}")
@@ -231,12 +265,15 @@ if __name__ == '__main__':
     trained_model, optimizer, criterion = train(arg.lr, arg.batch_size, arg.epochs, arg.dataset, architecture, exp_id=arg.id,
                           save_freq=arg.save_freq, num_gpu=arg.num_gpu, dec_lr=arg.milestone,
                           verify=arg.verify, resume=False)
-    t2 = time.time()
-    print("Total time: ", t2-t1)
+
+    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    watermark_loader = prepare_watermark_data()
+    watermark_accuracy = validate_watermark(trained_model, watermark_loader, device)
+    # Logic to decide if the watermark learning is satisfactory
     validate(arg.dataset, trained_model)
-    run_watermark_embedding(trained_model, optimizer, criterion)
-    print("Watermark embedding completed.")
     # Save the model with the embedded watermark
     model_path_with_watermark = 'model_with_watermark.pth'
     torch.save(trained_model.state_dict(), model_path_with_watermark)
-    print(f"Model with watermark saved at {model_path_with_watermark}")
+    logging.info("Model with watermark saved at {model_path_with_watermark}")
+    t2 = time.time()
+    logging.info(f"Total time: {t2 - t1}")

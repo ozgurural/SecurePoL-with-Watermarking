@@ -1,7 +1,10 @@
 # watermark_embedding.py
 import torch
+import logging
 from torch.utils.data import DataLoader, TensorDataset
 
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def prepare_watermark_data():
     num_samples = 100
@@ -12,17 +15,19 @@ def prepare_watermark_data():
     watermark_loader = DataLoader(watermark_dataset, batch_size=10, shuffle=False)
     return watermark_loader
 
-def embed_watermark(model, optimizer, criterion, watermark_loader):
-    model.train()
-    for inputs, targets in watermark_loader:
-        optimizer.zero_grad()
-        outputs = model(inputs)
-        loss = criterion(outputs, targets)
-        loss.backward()
-        optimizer.step()
-
-def run_watermark_embedding(model, optimizer, criterion):
-    watermark_loader = prepare_watermark_data()
-    embed_watermark(model, optimizer, criterion, watermark_loader)
-    print("Watermark embedding completed.")
+def validate_watermark(model, watermark_loader, device):
+    logging.info("Starting watermark validation.")
+    model.eval()  # Set the model to evaluation mode
+    correct = 0
+    total = 0
+    with torch.no_grad():  # No need to track gradients
+        for wm_inputs, wm_labels in watermark_loader:
+            wm_inputs, wm_labels = wm_inputs.to(device), wm_labels.to(device)
+            outputs = model(wm_inputs)
+            _, predicted = torch.max(outputs, 1)
+            total += wm_labels.size(0)
+            correct += (predicted == wm_labels).sum().item()
+    accuracy = correct / total
+    logging.info(f'Watermark validation accuracy: {accuracy * 100:.2f}%')
+    return accuracy
 

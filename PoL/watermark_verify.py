@@ -1,5 +1,6 @@
 # watermark_verify.py
 import torch
+import logging
 from torch.utils.data import DataLoader, TensorDataset
 from model import resnet20, resnet32  # Import your model constructors from the model module
 
@@ -24,7 +25,7 @@ def prepare_watermark_data(num_samples=100, input_size=(3, 32, 32), batch_size=1
 
 def verify_watermark(model, watermark_loader, device='cpu'):
     model.to(device)
-    model.eval()  # Set the model to evaluation mode
+    model.eval()
     correct = 0
     total = 0
     with torch.no_grad():
@@ -35,16 +36,15 @@ def verify_watermark(model, watermark_loader, device='cpu'):
             correct += (predicted == targets).sum().item()
             total += targets.size(0)
     accuracy = correct / total
-    print(f"Watermark verification accuracy: {accuracy * 100:.2f}%")
-    return accuracy == 1.0
-
+    logging.info(f"Watermark verification accuracy: {accuracy * 100:.2f}%")
+    return accuracy
 
 def run_watermark_verification(model_path, model_name, device='cpu'):
-    watermark_loader = prepare_watermark_data(device=device)
-    model = get_model(model_name)  # This function should return the correct model based on the name
+    model = get_model(model_name)  # Ensure this properly loads the model based on the name
     model.load_state_dict(torch.load(model_path, map_location=device))
-    verification_successful = verify_watermark(model, watermark_loader, device)
-    if verification_successful:
-        print("Watermark verification successful: The watermark is present in the model.")
+    watermark_loader = prepare_watermark_data(device=device)
+    accuracy = verify_watermark(model, watermark_loader, device)
+    if accuracy == 1.0:
+        logging.info("Watermark verification successful: The watermark is present in the model.")
     else:
-        print("Watermark verification failed: The watermark could not be detected in the model.")
+        logging.error("Watermark verification failed: The watermark could not be detected in the model.")
