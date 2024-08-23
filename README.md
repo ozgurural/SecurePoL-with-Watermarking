@@ -5,8 +5,7 @@ The rapid advancement of machine learning (ML) technologies has underscored the 
 
 **Project Advisor:**  
 Dr. Kenji Yoshigoe  
-Email: [yoshigok@erau.edu](mailto:yoshigok@erau.edu)  
-[Google Scholar Profile](https://scholar.google.com/citations?user=D6tC54MAAAAJ&hl=en)
+Email: [yoshigok@erau.edu](mailto:yoshigok@erau.edu)
 
 **PhD. Student:**  
 Ozgur Ural  
