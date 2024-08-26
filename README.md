@@ -1,22 +1,7 @@
 # Enhancing Security of Proof-of-Learning Against Spoofing Attacks Using Model Watermarking
 
 **Abstract:**  
-The rapid advancement of machine learning (ML) technologies has underscored the imperative for robust security frameworks, especially in safeguarding the integrity and authenticity of ML model training processes. Proof-of-Learning (PoL), a mechanism designed to verify the computational labor invested in the training of ML models, stands at the forefront of addressing these security concerns. However, PoL systems face significant challenges, particularly from sophisticated spoofing attacks that undermine the foundational trust and reliability essential to ML applications. Concurrently, model watermarking emerges as a potent strategy for asserting model ownership and protecting intellectual property, offering a unique solution to enhance ML models' security against theft and unauthorized replication. This research delves into integrating PoL and model watermarking, proposing a synergistic approach to fortify ML models against various security threats. We establish a comprehensive, dual-layered verification architecture by embedding unique, discernible watermarks within models during training and meticulously documenting these alongside PoL proofs. This innovative methodology authenticates the computational effort through PoL and corroborates the model's authenticity and integrity via watermark detection, significantly amplifying defenses against potential spoofing. Such spoofing attempts often involve adversaries seeking to unduly replicate the computational trajectory and precisely mimic the watermark, posing a grave threat to model security. In exploring this integration, we tackle challenges, including maintaining watermark robustness, navigating the complexity of incorporating watermarking within PoL and balancing watermark security with model efficacy. Our systematic analysis of PoL vulnerabilities, juxtaposed with a tailored exploration of watermarking strategies for ML models, culminates in developing a provably secure PoL mechanism. Theoretical insights and empirical validations underscore the efficacy of merging model watermarking with PoL, markedly enhancing the framework's resilience to spoofing attacks. This significant stride towards the secure verification of ML models paves the way for further research to safeguard the integrity and reliability of model training across diverse ML applications, contributing to the overarching endeavor of securing ML models against an increasingly complex array of threats.
-
-**Project Advisor:**  
-Dr. Kenji Yoshigoe  
-Email: [yoshigok@erau.edu](mailto:yoshigok@erau.edu)
-
-**PhD. Student:**  
-Ozgur Ural  
-Email: [uralo@my.erau.edu](mailto:uralo@my.erau.edu)  
-[LinkedIn Profile](https://www.linkedin.com/in/uralozgur/)
-
-**Embry-Riddle Aeronautical University, Daytona Beach**  
-*Department of Electrical Engineering & Computer Science*  
-Daytona Beach Campus  
-1 Aerospace Boulevard  
-Daytona Beach, FL 32114
+The rapid advancement of machine learning (ML) technologies has highlighted the need for robust security frameworks to protect the integrity of ML model training processes. Proof-of-Learning (PoL), which verifies the computational effort in training ML models, and model watermarking, a strategy for asserting model ownership, are critical. This research integrates PoL with model watermarking to enhance security against sophisticated spoofing attacks and unauthorized use. We propose a dual-layered verification architecture that embeds unique watermarks during training and documents these alongside PoL proofs. This approach authenticates computational effort and ensures model authenticity through watermark detection, strengthening defenses against spoofing. Spoofing attacks, where adversaries mimic a model's computational trajectory and watermark, pose a significant threat. We address challenges such as maintaining watermark robustness and balancing security with model performance. Our analysis reveals vulnerabilities in existing PoL systems and demonstrates how tailored watermarking strategies can fortify security. We present a provably secure PoL mechanism, supported by empirical validations, that enhances resilience to spoofing attacks. This advancement marks a significant step towards verifying the security of ML models, paving the way for further research to protect diverse ML applications from various threats.
 
 ## Enhancements in Proof-of-Learning with Adversarial Examples
 
@@ -24,7 +9,7 @@ This repository is anchored in the innovative work presented in ["Proof-of-Learn
 
 Despite its strengths, the PoL framework has security vulnerabilities, particularly spoofing attacks that can significantly compromise the system's integrity. Our research is committed to enhancing the PoL framework's resilience to such attacks.
 
-In addition to the original PoL framework, this repository also integrates findings from the study on ["Adversarial Examples for Proof-of-Learning"](https://arxiv.org/abs/2108.09454). This paper presents a method that successfully uncovers PoL vulnerabilities by leveraging adversarial examples, thereby questioning the PoL's security posture. This vital research informs our efforts to bolster the PoL framework, addressing and mitigating these emergent threats.
+In addition to the original PoL framework, this repository also integrates findings from the study on ["Adversarial Examples for Proof-of-Learning"](https://arxiv.org/abs/2108.09454). That paper presents a method that successfully uncovers PoL vulnerabilities by leveraging adversarial examples, thereby questioning the PoL's security posture. This vital research informs our efforts to bolster the PoL framework, addressing and mitigating these emergent threats.
 
 Building on this, our repository further includes the implementation from ["Adversarial Examples for Proof-of-Learning"](https://arxiv.org/abs/2108.09454), which introduces a method that effectively attacks the PoL concept through adversarial examples. This approach challenges the security assumptions of the initial PoL proposition and guides our initiatives to improve PoL's robustness.
 
