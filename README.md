@@ -118,7 +118,7 @@ To train a model and create a proof-of-learning:
 python PoL/train.py --save-freq [checkpointing interval] --dataset ['CIFAR100' or 'CIFAR10'] --model ['resnet50' or 'resnet20']
 python spoof_imagenet/train.py --freq [checkpointing interval]
 ```
-`save-freq` is a checkpointing interval, denoted by k in the paper[Proof-of-Learning: Definitions and Practice](https://arxiv.org/abs/2103.05633). 
+`save-freq` is a checkpointing interval, denoted by k in the paper [Proof-of-Learning: Definitions and Practice](https://arxiv.org/abs/2103.05633). 
 Put the generated model in 'spoof_cifar/proof/[dataset]' to spoof the model. 
 To generate CIFAR10 and CIFAR100 models with high accuracy:
 ```
