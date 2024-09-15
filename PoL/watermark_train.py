@@ -1,33 +1,58 @@
-# watermark_embedding.py
 import torch
 import logging
-from torch.utils.data import DataLoader, TensorDataset
 
-# Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def prepare_watermark_data():
+    """
+    Prepare dummy data for feature-based watermark validation. In feature-based watermarking,
+    the watermark is embedded in the model's internal representations, so we may not need
+    actual watermark data. However, for consistency, we'll prepare a set of inputs to use
+    during validation.
+    """
     num_samples = 100
     input_size = (3, 32, 32)
     watermark_inputs = torch.randn(num_samples, *input_size)
-    watermark_targets = torch.zeros(num_samples, dtype=torch.long)
-    watermark_dataset = TensorDataset(watermark_inputs, watermark_targets)
-    watermark_loader = DataLoader(watermark_dataset, batch_size=10, shuffle=False)
-    return watermark_loader
+    return watermark_inputs
 
-def validate_watermark(model, watermark_loader, device):
-    logging.info("Starting watermark validation.")
-    model.eval()  # Set the model to evaluation mode
-    correct = 0
-    total = 0
-    with torch.no_grad():  # No need to track gradients
-        for wm_inputs, wm_labels in watermark_loader:
-            wm_inputs, wm_labels = wm_inputs.to(device), wm_labels.to(device)
-            outputs = model(wm_inputs)
-            _, predicted = torch.max(outputs, 1)
-            total += wm_labels.size(0)
-            correct += (predicted == wm_labels).sum().item()
-    accuracy = correct / total
-    logging.info(f'Watermark validation accuracy: {accuracy * 100:.2f}%')
-    return accuracy
+def extract_features(model, inputs, layer_name='layer1'):
+    """
+    Extract features from a specific layer for watermark validation.
+    """
+    features = []
 
+    def hook(module, input, output):
+        features.append(output)
+
+    handle = dict([*model.named_modules()])[layer_name].register_forward_hook(hook)
+    with torch.no_grad():
+        model(inputs)
+    handle.remove()
+    return features[0]
+
+def validate_feature_watermark(model, watermark_inputs, device):
+    logging.info("Starting feature-based watermark validation.")
+    model.to(device)
+    model.eval()
+    watermark_inputs = watermark_inputs.to(device)
+    features = extract_features(model, watermark_inputs)
+    watermark_detected = check_watermark_in_features(features)
+    if watermark_detected:
+        logging.info("Feature-based watermark validation successful: Watermark detected.")
+        return 1.0  # 100% detection
+    else:
+        logging.error("Feature-based watermark validation failed: Watermark not detected.")
+        return 0.0  # 0% detection
+
+def check_watermark_in_features(features):
+    """
+    Check whether the watermark is present in the extracted features.
+    This function should implement the specific detection logic based on how the watermark was embedded.
+    """
+    # Example detection logic: Check for the presence of the watermark pattern in the features
+    # For simplicity, we'll check if the mean of the features exceeds a threshold
+    mean_feature_value = features.mean().item()
+    if mean_feature_value > 0.01:  # Threshold should be adjusted based on embedding strength
+        return True
+    else:
+        return False
