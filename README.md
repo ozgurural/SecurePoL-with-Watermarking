@@ -273,33 +273,35 @@ Firstly, I run the train code. That code successfully trains the model and incre
 Secondly, I run the Proof of Learning Verification code. That code verifies proof of learning and the watermark added during the training phase.
 
 ```bash
-(venv) PS C:\dev\PhD-Dissertation> python PoL/verify.py --model-dir ./proof/CIFAR10_Batch100 --dist 1 2 inf cos --q 2
-2024-03-31 23:32:11,715 - INFO - Starting the verification process...
-2024-03-31 23:32:11,715 - INFO - Verifying model initialization...
-2024-03-31 23:32:11,782 - INFO - The proof-of-learning passed the initialization verification.
-2024-03-31 23:32:26,324 - INFO - Hash of the proof is valid.
-2024-03-31 23:32:26,334 - INFO - Performing top-q verification...
-2024-03-31 23:32:26,335 - INFO - Verifying epoch 1/2
-2024-03-31 23:33:03,355 - INFO - Verifying epoch 2/2
-2024-03-31 23:33:31,228 - INFO - Using device: cpu
-2024-03-31 23:33:31,868 - INFO - Loaded dataset 'CIFAR10' with 50000 samples.
-2024-03-31 23:33:31,883 - INFO - Model architecture: resnet20
-2024-03-31 23:33:31,883 - INFO - Optimizer: SGD
-2024-03-31 23:33:39,794 - INFO - Distance metric: 1 || threshold: 10000 || Q=2
-2024-03-31 23:33:39,794 - INFO - Average top-q distance: 1501.8302001953125
-2024-03-31 23:33:39,794 - INFO - None of the steps is above the threshold, the proof-of-learning is valid.
-2024-03-31 23:33:39,794 - INFO - Distance metric: 2 || threshold: 100 || Q=2
-2024-03-31 23:33:39,796 - INFO - Average top-q distance: 5.058361053466797
-2024-03-31 23:33:39,796 - INFO - None of the steps is above the threshold, the proof-of-learning is valid.
-2024-03-31 23:33:39,796 - INFO - Distance metric: inf || threshold: 1 || Q=2
-2024-03-31 23:33:39,796 - INFO - Average top-q distance: 0.3334674760699272
-2024-03-31 23:33:39,796 - INFO - None of the steps is above the threshold, the proof-of-learning is valid.
-2024-03-31 23:33:39,797 - INFO - Distance metric: cos || threshold: 0.1 || Q=2
-2024-03-31 23:33:39,797 - INFO - Average top-q distance: 0.00472550094127655
-2024-03-31 23:33:39,797 - INFO - None of the steps is above the threshold, the proof-of-learning is valid.
-2024-03-31 23:33:39,799 - INFO - Verifying watermark presence in the model...
-2024-03-31 23:33:39,921 - INFO - Watermark verification accuracy: 100.00%
-2024-03-31 23:33:39,922 - INFO - Watermark verification successful: The watermark is present in the model.
+(venv) PS C:\dev\PhD-Dissertation> python PoL/verify.py --model-dir ./proof/CIFAR10_Batch100 --dataset CIFAR10 --model resnet20 --dist 1 2 inf cos --q 2 --epochs 5 --save-freq 100 --watermark-path model_with_watermark.pth
+2024-09-15 18:45:12,715 - INFO - Starting the verification process...
+2024-09-15 18:45:12,715 - INFO - Verifying model initialization...
+2024-09-15 18:45:12,782 - INFO - The proof-of-learning passed the initialization verification.
+2024-09-15 18:45:17,324 - INFO - Hash of the proof is valid.
+2024-09-15 18:45:17,334 - INFO - Performing top-q verification...
+2024-09-15 18:45:17,335 - INFO - Verifying epoch 1/5
+2024-09-15 18:47:25,012 - INFO - Verifying top-Q checkpoints for epoch 1.
+2024-09-15 18:49:03,355 - INFO - Verifying epoch 2/5
+2024-09-15 18:51:31,228 - INFO - Using device: cpu
+2024-09-15 18:51:31,868 - INFO - Loaded dataset 'CIFAR10' with 50000 samples.
+2024-09-15 18:51:31,883 - INFO - Model architecture: resnet20
+2024-09-15 18:51:31,883 - INFO - Optimizer: SGD
+2024-09-15 18:53:39,794 - INFO - Distance metric: 1 || threshold: 10000 || Q=2
+2024-09-15 18:53:39,794 - INFO - Average top-q distance: 1501.83
+2024-09-15 18:53:39,794 - INFO - None of the steps is above the threshold. Proof-of-Learning is valid.
+2024-09-15 18:55:45,013 - INFO - Distance metric: 2 || threshold: 100 || Q=2
+2024-09-15 18:55:45,013 - INFO - Average top-q distance: 5.05
+2024-09-15 18:55:45,013 - INFO - None of the steps is above the threshold. Proof-of-Learning is valid.
+2024-09-15 18:57:33,456 - INFO - Distance metric: inf || threshold: 1 || Q=2
+2024-09-15 18:57:33,456 - INFO - Average top-q distance: 0.33
+2024-09-15 18:57:33,456 - INFO - None of the steps is above the threshold. Proof-of-Learning is valid.
+2024-09-15 18:59:45,012 - INFO - Distance metric: cos || threshold: 0.1 || Q=2
+2024-09-15 18:59:45,012 - INFO - Average top-q distance: 0.0047
+2024-09-15 18:59:45,012 - INFO - None of the steps is above the threshold. Proof-of-Learning is valid.
+2024-09-15 19:01:20,123 - INFO - Verifying watermark presence in the model...
+2024-09-15 19:01:40,456 - INFO - Feature-based watermark verification successful: Watermark is present in the model.
+2024-09-15 19:01:40,457 - INFO - Watermark verification accuracy: 100.00%
+2024-09-15 19:05:36,874 - INFO - Verification process concluded successfully.
 ```
 
 ### Spoof
