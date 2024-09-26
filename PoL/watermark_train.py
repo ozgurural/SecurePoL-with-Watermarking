@@ -21,7 +21,7 @@ def extract_features(model, inputs, layer_name='layer1'):
     """
     features = []
 
-    def hook(module, input, output):
+    def hook(output):
         features.append(output)
 
     handle = dict([*model.named_modules()])[layer_name].register_forward_hook(hook)

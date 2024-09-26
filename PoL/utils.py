@@ -7,7 +7,7 @@ import torchvision.transforms as transforms
 
 
 def get_parameters(net, numpy=False):
-    # get weights from a torch model as a list of numpy arrays
+    # Get weights from a torch model as a single flattened tensor
     if type(net) is tuple:
         net = net[0]
     parameter = torch.cat([i.data.reshape([-1]) for i in list(net.parameters())])
@@ -18,24 +18,25 @@ def get_parameters(net, numpy=False):
 
 
 def set_parameters(net, parameters, device):
-    # load weights from a list of numpy arrays to a torch model
+    # Load weights from a list of numpy arrays to a torch model
     for i, (name, param) in enumerate(net.named_parameters()):
         param.data = torch.Tensor(parameters[i]).to(device)
     return net
 
 
 def create_sequences(batch_size, dataset_size, epochs):
-    # create a sequence of data indices used for training
-    sequence = np.concatenate([np.random.default_rng().choice(dataset_size, size=dataset_size, replace=False)
-                               for i in range(epochs)])
+    # Create a sequence of data indices used for training
+    sequence = np.concatenate([
+        np.random.default_rng().choice(dataset_size, size=dataset_size, replace=False)
+        for _ in range(epochs)
+    ])
     num_batch = int(len(sequence) // batch_size)
     return np.reshape(sequence[:num_batch * batch_size], [num_batch, batch_size])
 
 
 def consistent_type(model, architecture=None,
                     device=torch.device('cuda:0' if torch.cuda.is_available() else 'cpu'), half=False):
-    # this function takes in directory to where model is saved, model weights as a list of numpy array,
-    # or a torch model and outputs model weights as a list of numpy array
+    # This function ensures that model weights are in a consistent format (torch.Tensor)
     if isinstance(model, str):
         assert architecture is not None
         state = torch.load(model)
@@ -54,7 +55,7 @@ def consistent_type(model, architecture=None,
 
 
 def parameter_distance(model1, model2, order=2, architecture=None, half=False):
-    # compute the difference between 2 checkpoints
+    # Compute the difference between two checkpoints
     weights1 = consistent_type(model1, architecture, half=half)
     weights2 = consistent_type(model2, architecture, half=half)
     if not isinstance(order, list):
@@ -73,7 +74,7 @@ def parameter_distance(model1, model2, order=2, architecture=None, half=False):
                 try:
                     o = int(o)
                 except:
-                    raise TypeError("input metric for distance is not understandable")
+                    raise TypeError("Input metric for distance is not understandable")
             res = torch.norm(weights1 - weights2, p=o).cpu().numpy()
         if isinstance(res, np.ndarray):
             res = float(res)
@@ -81,119 +82,105 @@ def parameter_distance(model1, model2, order=2, architecture=None, half=False):
     return res_list
 
 
-def load_dataset(dataset, train, download=False):
+def load_dataset(dataset, train, download=True, augment=True):
+    # Load dataset with optional data augmentation
     try:
-        dataset_class = eval(f"torchvision.datasets.{dataset}")
-    except:
-        raise NotImplementedError(f"Dataset {dataset} is not implemented by pytorch.")
+        dataset_class = getattr(torchvision.datasets, dataset)
+    except AttributeError:
+        raise NotImplementedError(f"Dataset {dataset} is not implemented by torchvision.")
 
-    if dataset == "MNIST" or dataset == "FashionMNIST":
-        transform = transforms.Compose(
-            [transforms.ToTensor(),
-             transforms.Normalize((0.5,), (0.5,))])
+    if dataset in ["MNIST", "FashionMNIST"]:
+        transform_list = [transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))]
     elif dataset == "CIFAR100":
-        if train:
-            transform = transforms.Compose([
+        if train and augment:
+            transform_list = [
                 transforms.RandomCrop(32, padding=4),
                 transforms.RandomHorizontalFlip(),
                 transforms.RandomRotation(15),
-                transforms.ToTensor(),
-                transforms.Normalize((0.5070751592371323, 0.48654887331495095, 0.4409178433670343),
-                                     (0.2673342858792401, 0.2564384629170883, 0.27615047132568404))])
+            ]
         else:
-            transform = transforms.Compose([
-                transforms.ToTensor(),
-                transforms.Normalize((0.5070751592371323, 0.48654887331495095, 0.4409178433670343),
-                                     (0.2673342858792401, 0.2564384629170883, 0.27615047132568404))])
-    else:
-        if train:
-            transform = transforms.Compose([
-                transforms.RandomCrop(32, 4),
+            transform_list = []
+        transform_list += [
+            transforms.ToTensor(),
+            transforms.Normalize(
+                mean=(0.5070751592371323, 0.48654887331495095, 0.4409178433670343),
+                std=(0.2673342858792401, 0.2564384629170883, 0.27615047132568404)
+            )
+        ]
+    else:  # CIFAR10 or other datasets
+        if train and augment:
+            transform_list = [
+                transforms.RandomCrop(32, padding=4),
                 transforms.RandomHorizontalFlip(p=0.5),
-                transforms.ToTensor(),
-                transforms.Normalize(mean=[0.4914, 0.4822, 0.4465], std=[0.2023, 0.1994, 0.2010])])
+            ]
         else:
-            transform = transforms.Compose([
-                transforms.ToTensor(),
-                transforms.Normalize(mean=[0.4914, 0.4822, 0.4465],std=[0.2023, 0.1994, 0.2010])])
+            transform_list = []
+        transform_list += [
+            transforms.ToTensor(),
+            transforms.Normalize(
+                mean=[0.4914, 0.4822, 0.4465],
+                std=[0.2023, 0.1994, 0.2010]
+            )
+        ]
 
+    transform = transforms.Compose(transform_list)
     data = dataset_class(root='./data', train=train, download=download, transform=transform)
     return data
 
 
 def ks_test(reference, rvs):
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    # Kolmogorov-Smirnov test using PyTorch
+    device = rvs.device
     with torch.no_grad():
-        ecdf = torch.arange(rvs.shape[0]).float() / torch.tensor(rvs.shape)
-        return torch.max(torch.abs(reference(torch.sort(rvs)[0]).to(device) - ecdf.to(device)))
+        ecdf = torch.arange(1, rvs.shape[0] + 1, dtype=torch.float32, device=device) / rvs.shape[0]
+        sorted_rvs, _ = torch.sort(rvs)
+        cdf_vals = reference(sorted_rvs)
+        ks_stat = torch.max(torch.abs(cdf_vals - ecdf)).item()
+    return ks_stat
 
 
 def check_weights_initialization(param, method):
+    # Check if the weights follow the specified initialization distribution
     if method == 'default':
-        # kaimin uniform (default for weights of nn.Conv and nn.Linear)
+        # Kaiming uniform (default for weights of nn.Conv and nn.Linear)
         fan = nn.init._calculate_correct_fan(param, 'fan_in')
         gain = nn.init.calculate_gain('leaky_relu', np.sqrt(5))
         std = gain / np.sqrt(fan)
         bound = np.sqrt(3.0) * std
-        reference = torch.distributions.uniform.Uniform(-bound, bound).cdf
+        reference = torch.distributions.Uniform(-bound, bound).cdf
     elif method == 'resnet_cifar':
-        # kaimin normal
+        # Kaiming normal
         fan = nn.init._calculate_correct_fan(param, 'fan_in')
-        gain = nn.init.calculate_gain('leaky_relu', 0)
+        gain = nn.init.calculate_gain('relu', 0)
         std = gain / np.sqrt(fan)
-        reference = torch.distributions.normal.Normal(0, std).cdf
+        reference = torch.distributions.Normal(0, std).cdf
     elif method == 'resnet':
-        # kaimin normal (default in conv layers of pytorch resnet)
+        # Kaiming normal (default in conv layers of PyTorch ResNet)
         fan = nn.init._calculate_correct_fan(param, 'fan_out')
         gain = nn.init.calculate_gain('relu', 0)
         std = gain / np.sqrt(fan)
-        reference = torch.distributions.normal.Normal(0, std).cdf
+        reference = torch.distributions.Normal(0, std).cdf
     elif method == 'default_bias':
-        # default for bias of nn.Conv and nn.Linear
+        # Default for bias of nn.Conv and nn.Linear
         weight, param = param
         fan_in, _ = nn.init._calculate_fan_in_and_fan_out(weight)
         bound = 1 / np.sqrt(fan_in)
-        reference = torch.distributions.uniform.Uniform(-bound, bound).cdf
+        reference = torch.distributions.Uniform(-bound, bound).cdf
     else:
         raise NotImplementedError("Input initialization strategy is not implemented.")
 
     param = param.reshape(-1)
-    ks_stats = ks_test(reference, param.cpu()).cpu().item()
-    return stats.kstwo.sf(ks_stats, param.shape[0])
+    ks_stat = ks_test(reference, param.cpu())
+    p_value = stats.kstwo.sf(ks_stat, param.shape[0])
+    return p_value
 
 
-def check_weights_initialization_scipy(param, method):
-    if method == 'default':
-        # kaimin uniform (default for weights of nn.Conv and nn.Linear)
-        fan = nn.init._calculate_correct_fan(param, 'fan_in')
-        gain = nn.init.calculate_gain('leaky_relu', np.sqrt(5))
-        std = gain / np.sqrt(fan)
-        bound = np.sqrt(3.0) * std
-        reference = stats.uniform(loc=-bound, scale=bound * 2).cdf
-    elif method == 'resnet':
-        # kaimin normal (default in conv layers of pytorch resnet)
-        fan = nn.init._calculate_correct_fan(param, 'fan_out')
-        gain = nn.init.calculate_gain('relu', 0)
-        std = gain / np.sqrt(fan)
-        reference = stats.norm(loc=0, scale=std).cdf
-    elif method == 'default_bias':
-        # default for bias of nn.Conv and nn.Linear
-        weight, param = param
-        fan_in, _ = nn.init._calculate_fan_in_and_fan_out(weight)
-        bound = 1 / np.sqrt(fan_in)
-        reference = stats.uniform(loc=-bound, scale=bound * 2).cdf
-    else:
-        raise NotImplementedError("Input initialization strategy is not implemented.")
-
-    param = param.detach().numpy().reshape(-1)
-    return stats.kstest(param, reference)[1]
-
-
-def test_accuracy(test_loader, model, num):
+def test_accuracy(test_loader, model, num_samples):
+    # Compute the accuracy of the model on a subset of the test dataset
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     correct = 0
     total = 0
-
+    model.eval()
     with torch.no_grad():
         for data in test_loader:
             img, labels = data
@@ -202,7 +189,7 @@ def test_accuracy(test_loader, model, num):
             _, pred = torch.max(out.data, 1)
             total += labels.size(0)
             correct += (pred == labels).sum().item()
-            if (total >= num):
+            if total >= num_samples:
                 break
-
-    return correct / total
+    accuracy = correct / total
+    return accuracy
