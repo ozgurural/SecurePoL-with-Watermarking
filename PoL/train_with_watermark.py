@@ -10,32 +10,18 @@ import utils  # Ensure utils.py is available
 import logging
 import random
 import json
-from watermark_utils import prepare_watermark_data, validate_feature_watermark
+from watermark_utils import (
+    prepare_watermark_data,
+    validate_feature_watermark,
+    generate_watermark_pattern,
+    select_parameters_to_perturb,
+    apply_parameter_perturbations,
+    should_embed_watermark,
+    WatermarkModule
+)
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-
-def embed_feature_watermark(features, watermark_key, step):
-    # Generate a deterministic random mask based on the watermark key and step
-    seed = int(hashlib.sha256((watermark_key + str(step)).encode()).hexdigest(), 16) % (2**32)
-    torch.manual_seed(seed)
-    mask = (torch.rand_like(features) < 0.01).float()  # 1% of the features
-    noise = torch.randn_like(features) * 0.01  # Small noise
-    desired_features = features + mask * noise
-    return desired_features, mask
-
-
-
-def should_embed_watermark(step, k, watermark_key, randomize=False):
-    k = int(k)
-    if k <= 0:
-        return False
-    if randomize:
-        seed = int(hashlib.sha256((watermark_key + str(step)).encode()).hexdigest(), 16) % (2**32)
-        torch.manual_seed(seed)
-        return torch.rand(1).item() < (1 / k)
-    return (step % k) == 0
 
 
 def _weights_init(m):
@@ -46,7 +32,8 @@ def _weights_init(m):
 def train(lr, batch_size, epochs, dataset, architecture, exp_id=None, sequence=None,
           model_dir=None, save_freq=None, num_gpu=torch.cuda.device_count(), verify=False,
           dec_lr=None, half=False, resume=False, lambda_wm=0.01, k=100, randomize=False,
-          watermark_key="secret_key"):
+          watermark_key="secret_key", watermark_method='feature_based',
+          num_parameters=1000, perturbation_strength=1e-5, watermark_size=128):
     k = int(k)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     logging.info(f"Using device: {device}")
@@ -66,8 +53,14 @@ def train(lr, batch_size, epochs, dataset, architecture, exp_id=None, sequence=N
         batch_size = batch_size * num_gpu
         logging.info(f"Adjusted batch size for multiple GPUs: {batch_size}")
 
+    # Initialize the model
     net = architecture()
     net.apply(_weights_init)
+
+    # For non-intrusive watermarking, modify the model to include the watermark module
+    if watermark_method == 'non_intrusive':
+        net = WatermarkModule(net, watermark_key, watermark_size=watermark_size)
+
     net.to(device)
 
     # Initialize optimizer and scheduler
@@ -167,7 +160,11 @@ def train(lr, batch_size, epochs, dataset, architecture, exp_id=None, sequence=N
             'lambda_wm': lambda_wm,
             'k': k,
             'randomize': randomize,
-            'seed': seed  # Include the random seed used
+            'seed': seed,  # Include the random seed used
+            'watermark_method': watermark_method,
+            'num_parameters': num_parameters,
+            'perturbation_strength': perturbation_strength,
+            'watermark_size': watermark_size
         }
         with open(os.path.join(save_dir, "watermark_info.json"), "w") as f:
             json.dump(watermark_info, f)
@@ -210,32 +207,60 @@ def train(lr, batch_size, epochs, dataset, architecture, exp_id=None, sequence=N
             inputs, labels = inputs.to(device), labels.to(device)
             optimizer.zero_grad()
 
-            features_list = []
+            if watermark_method == 'feature_based':
+                features_list = []
 
-            # Register forward hook to extract features
-            def forward_hook(module, input, output):
-                features_list.append(output)
+                # Register forward hook to extract features
+                def forward_hook(module, input, output):
+                    features_list.append(output)
 
-            if isinstance(net, nn.DataParallel):
-                handle = net.module.layer1.register_forward_hook(forward_hook)
+                if isinstance(net, nn.DataParallel):
+                    handle = net.module.layer1.register_forward_hook(forward_hook)
+                else:
+                    handle = net.layer1.register_forward_hook(forward_hook)
+
+                outputs = net(inputs)
+
+                # Remove the hook
+                handle.remove()
+
+                loss = criterion(outputs, labels)
+
+                # Watermark loss
+                if lambda_wm > 0 and should_embed_watermark(current_step, k, watermark_key, randomize):
+                    features = features_list[0]
+                    desired_features, mask = utils.embed_feature_watermark(features, watermark_key, current_step)
+                    # Compute watermark loss on the masked features
+                    wm_loss = nn.MSELoss()(features * mask, desired_features * mask)
+                    loss += lambda_wm * wm_loss
+                    logging.info(f"Feature-based watermark loss computed at step {current_step}")
+
+            elif watermark_method == 'parameter_perturbation':
+                outputs = net(inputs)
+                loss = criterion(outputs, labels)
+
+                # Watermark embedding
+                if lambda_wm > 0 and should_embed_watermark(current_step, k, watermark_key, randomize):
+                    selected_params = select_parameters_to_perturb(net, num_parameters, watermark_key)
+                    watermark_pattern = generate_watermark_pattern(watermark_key, len(selected_params))
+                    apply_parameter_perturbations(net, selected_params, watermark_pattern, perturbation_strength)
+                    logging.info(f"Parameter perturbation watermark applied at step {current_step}")
+
+            elif watermark_method == 'non_intrusive':
+                outputs = net(inputs, trigger=False)
+                loss = criterion(outputs, labels)
+
+                # Watermark loss
+                if lambda_wm > 0 and should_embed_watermark(current_step, k, watermark_key, randomize):
+                    # Generate watermark target
+                    watermark_target = utils.generate_watermark_target(inputs, watermark_key, watermark_size)
+                    watermark_output = net(inputs, trigger=True)
+                    wm_loss = nn.MSELoss()(watermark_output, watermark_target)
+                    loss += lambda_wm * wm_loss
+                    logging.info(f"Non-intrusive watermark loss computed at step {current_step}")
+
             else:
-                handle = net.layer1.register_forward_hook(forward_hook)
-
-            outputs = net(inputs)
-
-            # Remove the hook
-            handle.remove()
-
-            loss = criterion(outputs, labels)
-
-            # Watermark loss
-            if lambda_wm > 0 and should_embed_watermark(current_step, k, watermark_key, randomize):
-                features = features_list[0]
-                desired_features, mask = embed_feature_watermark(features, watermark_key, current_step)
-                # Compute watermark loss on the masked features
-                wm_loss = nn.MSELoss()(features * mask, desired_features * mask)
-                loss += lambda_wm * wm_loss
-                logging.info(f"Feature-based watermark loss computed at step {current_step}")
+                raise ValueError(f"Unknown watermarking method: {watermark_method}")
 
             loss.backward()
             optimizer.step()
@@ -291,7 +316,12 @@ def validate(dataset, model, batch_size=128):
     with torch.no_grad():
         for inputs, labels in testloader:
             inputs, labels = inputs.to(device), labels.to(device)
-            outputs = model(inputs)
+            if hasattr(model, 'module') and isinstance(model.module, WatermarkModule):
+                outputs = model(inputs, trigger=False)
+            elif isinstance(model, WatermarkModule):
+                outputs = model(inputs, trigger=False)
+            else:
+                outputs = model(inputs)
             _, predicted = torch.max(outputs.data, 1)
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
@@ -302,7 +332,7 @@ def validate(dataset, model, batch_size=128):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="Training Script with Feature-Based Watermarking")
+    parser = argparse.ArgumentParser(description="Training Script with Watermarking")
     parser.add_argument('--batch-size', type=int, default=128, help='Batch size for training')
     parser.add_argument('--lr', type=float, default=0.1, help='Learning rate')
     parser.add_argument('--epochs', type=int, default=10, help='Number of training epochs')
@@ -317,6 +347,12 @@ if __name__ == '__main__':
     parser.add_argument('--k', type=int, default=1000, help='Watermark embedding frequency (in steps)')
     parser.add_argument('--randomize', action='store_true', help='Randomize watermark embedding intervals')
     parser.add_argument('--watermark-key', type=str, default='secret_key', help='Key used for watermark embedding')
+    parser.add_argument('--watermark-method', type=str, default='feature_based',
+                        choices=['feature_based', 'parameter_perturbation', 'non_intrusive'],
+                        help='Watermarking method to use during training')
+    parser.add_argument('--num-parameters', type=int, default=1000, help='Number of parameters to perturb for parameter perturbation watermarking')
+    parser.add_argument('--perturbation-strength', type=float, default=1e-5, help='Strength of parameter perturbations')
+    parser.add_argument('--watermark-size', type=int, default=128, help='Size of the watermark for non-intrusive watermarking')
     arg = parser.parse_args()
 
     # Set random seeds for reproducibility
@@ -359,23 +395,54 @@ if __name__ == '__main__':
         lambda_wm=arg.lambda_wm,
         k=arg.k,
         randomize=arg.randomize,
-        watermark_key=arg.watermark_key
+        watermark_key=arg.watermark_key,
+        watermark_method=arg.watermark_method,
+        num_parameters=arg.num_parameters,
+        perturbation_strength=arg.perturbation_strength,
+        watermark_size=arg.watermark_size
     )
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # Validate watermark
-    watermark_inputs = prepare_watermark_data(device=device)
-    watermark_accuracy = validate_feature_watermark(trained_model, watermark_inputs, device)
-    logging.info(f'Watermark Detection Accuracy: {watermark_accuracy * 100:.2f}%')
+    if arg.watermark_method == 'feature_based':
+        watermark_inputs = prepare_watermark_data(device=device, watermark_key=arg.watermark_key)
+        watermark_accuracy = validate_feature_watermark(trained_model, watermark_inputs, device, watermark_key=arg.watermark_key)
+        logging.info(f'Feature-Based Watermark Detection Accuracy: {watermark_accuracy * 100:.2f}%')
+
+    elif arg.watermark_method == 'parameter_perturbation':
+        watermark_detected = utils.verify_parameter_perturbation_watermark(
+            model=trained_model,
+            watermark_key=arg.watermark_key,
+            perturbation_strength=arg.perturbation_strength,
+            num_parameters=arg.num_parameters,
+            tolerance=1e-6
+        )
+        if watermark_detected:
+            logging.info("Parameter Perturbation Watermark detected successfully.")
+        else:
+            logging.error("Parameter Perturbation Watermark not detected.")
+
+    elif arg.watermark_method == 'non_intrusive':
+        watermark_detected = utils.verify_non_intrusive_watermark(
+            model=trained_model,
+            device=device,
+            watermark_key=arg.watermark_key,
+            watermark_size=arg.watermark_size,
+            tolerance=1e-5
+        )
+        if watermark_detected:
+            logging.info("Non-Intrusive Watermark detected successfully.")
+        else:
+            logging.error("Non-Intrusive Watermark not detected.")
 
     # Validate on main dataset
     validate(arg.dataset, trained_model)
 
     # Save the model with the embedded watermark
-    model_path_with_watermark = 'model_with_watermark.pth'
+    model_path_with_watermark = f'model_with_{arg.watermark_method}_watermark.pth'
     torch.save(trained_model.state_dict(), model_path_with_watermark)
-    logging.info(f"Model with watermark saved at {model_path_with_watermark}")
+    logging.info(f"Model with {arg.watermark_method} watermark saved at {model_path_with_watermark}")
 
     t2 = time.time()
     logging.info(f"Total training time: {t2 - t1:.2f} seconds")
