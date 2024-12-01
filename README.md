@@ -1,18 +1,24 @@
-# Enhancing Security of Proof-of-Learning against Spoofing Attacks Using Feature-Based Model Watermarking
+# Enhancing Security of Proof-of-Learning Against Spoofing Attacks Using Advanced Model Watermarking Methods
 
-**Abstract:**  
-The rapid advancement of machine learning (ML) technologies necessitates robust security frameworks to protect the integrity of ML model training processes. Proof-of-Learning (PoL) is a critical method for verifying the computational effort in training ML models, while model watermarking is a strategy for asserting model ownership. This research integrates PoL with feature-based model watermarking, embedding the watermark directly into the model's features or parameters. This integration mitigates security risks associated with external key management and reduces computational overhead by eliminating the need for complex verification procedures. Our proposed dual-layered verification architecture embeds unique watermarks during the training phase. It records them alongside PoL proofs, enhancing security against sophisticated spoofing attacks where adversaries attempt to mimic a model's computational trajectory and watermark. This approach addresses key challenges, including maintaining watermark robustness and balancing security with model performance. Through a comprehensive analysis, we identify vulnerabilities in existing PoL systems and demonstrate how feature-based watermarking can enhance security. We present a secure PoL mechanism, supported by empirical validation, that significantly improves resilience to spoofing attacks. This advancement represents a crucial step towards securing ML models, paving the way for future research to protect diverse ML applications from various threats.
+**Abstract:**
 
-**Keywords:**  
-Proof-of-Learning, Model Watermarking, Machine Learning Security, Spoofing Attack Countermeasures, Dual-Layered Verification, Model Authenticity, Intellectual Property Protection in ML, Computational Effort Authentication, Security Enhancements in Machine Learning, Watermark Robustness, Model Integrity Verification.
+The rapid advancement of machine learning (ML) technologies necessitates robust security frameworks to protect the integrity of ML model training processes. Proof-of-Learning (PoL) is a critical method for verifying the computational effort in training ML models, while model watermarking is a strategy for asserting model ownership. This research integrates PoL with advanced model watermarking techniques, including **Feature-Based**, **Parameter Perturbation-Based**, and **Non-Intrusive** watermarking methods. These integrations mitigate security risks associated with external key management and reduce computational overhead by eliminating the need for complex verification procedures. Our proposed dual-layered verification architecture embeds unique watermarks during the training phase and records them alongside PoL proofs, enhancing security against sophisticated spoofing attacks where adversaries attempt to mimic a model's computational trajectory and watermark. This approach addresses key challenges, including maintaining watermark robustness and balancing security with model performance. Through a comprehensive analysis, we identify vulnerabilities in existing PoL systems and demonstrate how advanced watermarking can enhance security. We present a secure PoL mechanism, supported by empirical validation, that significantly improves resilience to spoofing attacks. This advancement represents a crucial step towards securing ML models, paving the way for future research to protect diverse ML applications from various threats.
+
+**Keywords:**
+
+Proof-of-Learning, Model Watermarking, Feature-Based Watermarking, Parameter Perturbation-Based Watermarking, Non-Intrusive Watermarking, Machine Learning Security, Spoofing Attack Countermeasures, Dual-Layered Verification, Model Authenticity, Intellectual Property Protection in ML, Computational Effort Authentication, Security Enhancements in Machine Learning, Watermark Robustness, Model Integrity Verification.
 
 ---
 
-## Enhancements in Proof-of-Learning with Feature-Based Model Watermarking
+## Introduction
 
 This repository builds upon the innovative work presented in ["Proof-of-Learning: Definitions and Practice"](https://arxiv.org/abs/2103.05633), featured at the 42nd IEEE Symposium on Security and Privacy. The paper introduces the Proof-of-Learning (PoL) concept in machine learning (ML), inspired by mechanisms of proof-of-work and verified computing. It details how the gradient descent algorithm—fundamental to ML training—accumulates stochastic information, providing a basis for PoL to validate the computational work invested in accurately deriving a model's parameters.
 
-Despite its strengths, the PoL framework has security vulnerabilities, particularly spoofing attacks that can significantly compromise the system's integrity. Our research enhances the PoL framework's resilience to such attacks by integrating **feature-based model watermarking**, which embeds the watermark directly into the model's features or parameters.
+Despite its strengths, the PoL framework has security vulnerabilities, particularly spoofing attacks that can significantly compromise the system's integrity. Our research enhances the PoL framework's resilience to such attacks by integrating advanced model watermarking techniques:
+
+- **Feature-Based Watermarking**
+- **Parameter Perturbation-Based Watermarking**
+- **Non-Intrusive Watermarking**
 
 This integration:
 
@@ -22,7 +28,7 @@ This integration:
 
 We have thoroughly tested our code with datasets such as CIFAR-10, CIFAR-100, and a subset of ImageNet, ensuring the efficacy of our security enhancements. For an in-depth understanding of our contributions to fortifying the PoL framework against adversarial threats, we encourage you to review the aforementioned papers.
 
-### Dependency
+## Dependency
 
 Our code is implemented and tested on PyTorch. The following packages are used:
 
@@ -33,12 +39,21 @@ numpy
 scipy
 ```
 
-### Training with Feature-Based Watermarking
+### Training with Advanced Watermarking Techniques
 
-To train a model, create a proof-of-learning, and embed a feature-based watermark:
+To train a model, create a proof-of-learning, and embed a watermark using one of the supported watermarking methods, use the following command:
 
 ```bash
-python PoL/train_with_watermark.py --save-freq [checkpointing interval] --dataset [dataset] --model [model architecture] --epochs [number of epochs] --lambda-wm [watermark loss weight] --k [watermark embedding frequency] --watermark-key [secret key]
+python PoL/train_with_watermark.py \
+    --save-freq [checkpointing interval] \
+    --dataset [dataset] \
+    --model [model architecture] \
+    --epochs [number of epochs] \
+    --lambda-wm [watermark loss weight] \
+    --k [watermark embedding frequency] \
+    --watermark-key [secret key] \
+    --watermark-method [watermarking method] \
+    [additional parameters based on method]
 ```
 
 - `--save-freq` is the checkpointing interval (denoted by *k* in the PoL paper).
@@ -46,10 +61,59 @@ python PoL/train_with_watermark.py --save-freq [checkpointing interval] --datase
 - `--k` determines how frequently the watermark is embedded during training steps.
 - `--watermark-key` is a secret key used to generate the watermark.
 
+Watermarking Methods
+Feature-Based Watermarking (default)
+Parameter Perturbation-Based Watermarking
+Non-Intrusive Watermarking
+Additional Parameters Based on Method
+For Parameter Perturbation-Based Watermarking:
+--num-parameters [number of parameters to perturb]
+--perturbation-strength [strength of perturbations]
+For Non-Intrusive Watermarking:
+--watermark-size [size of the watermark]
+
 **Example:**
 
+Feature-Based Watermarking
 ```bash
-python PoL/train_with_watermark.py --save-freq 100 --dataset CIFAR10 --model resnet20 --epochs 2 --lambda-wm 0.01 --k 1000 --watermark-key 'secret_key'
+python PoL/train_with_watermark.py \
+    --save-freq 100 \
+    --dataset CIFAR10 \
+    --model resnet20 \
+    --epochs 2 \
+    --lambda-wm 0.01 \
+    --k 1000 \
+    --watermark-key 'secret_key' \
+    --watermark-method 'feature_based'
+```
+
+Parameter Perturbation-Based Watermarking
+```bash
+python PoL/train_with_watermark.py \
+    --save-freq 100 \
+    --dataset CIFAR10 \
+    --model resnet20 \
+    --epochs 2 \
+    --lambda-wm 0.01 \
+    --k 1000 \
+    --watermark-key 'secret_key' \
+    --watermark-method 'parameter_perturbation' \
+    --num-parameters 1000 \
+    --perturbation-strength 1e-5
+```
+
+Non-Intrusive Watermarking
+```bash
+python PoL/train_with_watermark.py \
+    --save-freq 100 \
+    --dataset CIFAR10 \
+    --model resnet20 \
+    --epochs 2 \
+    --lambda-wm 0.01 \
+    --k 1000 \
+    --watermark-key 'secret_key' \
+    --watermark-method 'non_intrusive' \
+    --watermark-size 128
 ```
 
 ### Verification
@@ -57,17 +121,156 @@ python PoL/train_with_watermark.py --save-freq 100 --dataset CIFAR10 --model res
 To verify a given proof-of-learning and check for the presence of the feature-based watermark:
 
 ```bash
-python PoL/verify.py --model-dir [path/to/the/proof] --dataset [dataset] --model [model architecture] --epochs [number of epochs] --save-freq [checkpointing interval] --batch-size [batch size] --lr [learning rate] --lambda-wm [watermark loss weight] --k [watermark embedding frequency] --watermark-key [secret key] --dist [distance metrics] --delta [thresholds] --watermark-path [path to watermarked model]
+python PoL/verify.py \
+    --model-dir [path/to/the/proof] \
+    --dataset [dataset] \
+    --model [model architecture] \
+    --epochs [number of epochs] \
+    --save-freq [checkpointing interval] \
+    --batch-size [batch size] \
+    --lr [learning rate] \
+    --lambda-wm [watermark loss weight] \
+    --k [watermark embedding frequency] \
+    --watermark-key [secret key] \
+    --watermark-method [watermarking method] \
+    [additional parameters based on method] \
+    --dist [distance metrics] \
+    --delta [thresholds] \
+    --watermark-path [path to watermarked model]
 ```
 
 - `--dist` can be one or more of `1`, `2`, `inf`, `cos` (separated by spaces).
 - `--delta` are the corresponding thresholds for the distance metrics.
 - `--watermark-path` specifies the path to the saved model with the embedded watermark.
 
-**Example:**
+**Examples:**
+Feature-Based Watermarking
 
 ```bash
-python PoL/verify.py --model-dir proof/CIFAR10_Batch100 --dataset CIFAR10 --model resnet20 --epochs 2 --save-freq 100 --batch-size 128 --lr 0.1 --lambda-wm 0.01 --k 1000 --watermark-key 'secret_key' --dist 1 2 inf cos --delta 10000 100 1 0.1 --watermark-path model_with_watermark.pth
+python PoL/train_with_watermark.py \
+    --save-freq 100 \
+    --dataset CIFAR10 \
+    --model resnet20 \
+    --epochs 2 \
+    --lambda-wm 0.01 \
+    --k 1000 \
+    --watermark-key 'secret_key' \
+    --watermark-method 'feature_based'
+```
+
+Parameter Perturbation-Based Watermarking
+
+```bash
+python PoL/train_with_watermark.py \
+    --save-freq 100 \
+    --dataset CIFAR10 \
+    --model resnet20 \
+    --epochs 2 \
+    --lambda-wm 0.01 \
+    --k 1000 \
+    --watermark-key 'secret_key' \
+    --watermark-method 'parameter_perturbation' \
+    --num-parameters 1000 \
+    --perturbation-strength 1e-5
+```
+
+Non-Intrusive Watermarking
+
+```bash
+python PoL/train_with_watermark.py \
+    --save-freq 100 \
+    --dataset CIFAR10 \
+    --model resnet20 \
+    --epochs 2 \
+    --lambda-wm 0.01 \
+    --k 1000 \
+    --watermark-key 'secret_key' \
+    --watermark-method 'non_intrusive' \
+    --watermark-size 128
+```
+
+# Verification
+
+To verify a given proof-of-learning and check for the presence of the watermark, use the following command:
+
+```bash
+python PoL/verify.py \
+    --model-dir [path/to/the/proof] \
+    --dataset [dataset] \
+    --model [model architecture] \
+    --epochs [number of epochs] \
+    --save-freq [checkpointing interval] \
+    --batch-size [batch size] \
+    --lr [learning rate] \
+    --lambda-wm [watermark loss weight] \
+    --k [watermark embedding frequency] \
+    --watermark-key [secret key] \
+    --watermark-method [watermarking method] \
+    [additional parameters based on method] \
+    --dist [distance metrics] \
+    --delta [thresholds] \
+    --watermark-path [path to watermarked model]
+```
+
+Examples
+Feature-Based Watermarking Verification
+```bash
+python PoL/verify.py \
+    --model-dir proof/CIFAR10_Batch100 \
+    --dataset CIFAR10 \
+    --model resnet20 \
+    --epochs 2 \
+    --save-freq 100 \
+    --batch-size 128 \
+    --lr 0.1 \
+    --lambda-wm 0.01 \
+    --k 1000 \
+    --watermark-key 'secret_key' \
+    --watermark-method 'feature_based' \
+    --dist 1 2 inf cos \
+    --delta 10000 100 1 0.1 \
+    --watermark-path model_with_feature_based_watermark.pth
+```
+
+Parameter Perturbation-Based Watermarking Verification
+```bash
+python PoL/verify.py \
+    --model-dir proof/CIFAR10_Batch100 \
+    --dataset CIFAR10 \
+    --model resnet20 \
+    --epochs 2 \
+    --save-freq 100 \
+    --batch-size 128 \
+    --lr 0.1 \
+    --lambda-wm 0.01 \
+    --k 1000 \
+    --watermark-key 'secret_key' \
+    --watermark-method 'parameter_perturbation' \
+    --num-parameters 1000 \
+    --perturbation-strength 1e-5 \
+    --dist 1 2 inf cos \
+    --delta 10000 100 1 0.1 \
+    --watermark-path model_with_parameter_perturbation_watermark.pth
+```
+
+Non-Intrusive Watermarking Verification
+```bash
+python PoL/verify.py \
+    --model-dir proof/CIFAR10_Batch100 \
+    --dataset CIFAR10 \
+    --model resnet20 \
+    --epochs 2 \
+    --save-freq 100 \
+    --batch-size 128 \
+    --lr 0.1 \
+    --lambda-wm 0.01 \
+    --k 1000 \
+    --watermark-key 'secret_key' \
+    --watermark-method 'non_intrusive' \
+    --watermark-size 128 \
+    --dist 1 2 inf cos \
+    --delta 10000 100 1 0.1 \
+    --watermark-path model_with_non_intrusive_watermark.pth
 ```
 
 ### Run Sample
