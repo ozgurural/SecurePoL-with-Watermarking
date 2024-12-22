@@ -3,8 +3,6 @@ import torch.nn as nn
 import numpy as np
 import hashlib
 import logging
-import json
-import os
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -21,8 +19,8 @@ def generate_watermark_pattern(watermark_key, length):
 
 def select_parameters_to_perturb(model, num_parameters, watermark_key):
     """
-    Select a subset of trainable parameters (no. = num_parameters) from the model.
-    Raises ValueError if num_parameters > count of trainable params.
+    Select a subset of trainable parameters (count = num_parameters) from the model.
+    Raises ValueError if num_parameters > the count of trainable params.
     """
     trainable_params = []
     for name, param in model.named_parameters():
@@ -34,7 +32,7 @@ def select_parameters_to_perturb(model, num_parameters, watermark_key):
         raise ValueError(
             f"Requested {num_parameters} parameters to perturb, but the model only "
             f"has {total_trainable} trainable parameters. "
-            f"Decrease --num-parameters or use a larger model."
+            f"Please decrease --num-parameters or use a larger model."
         )
 
     # Create deterministic indices for selecting params
@@ -45,28 +43,33 @@ def select_parameters_to_perturb(model, num_parameters, watermark_key):
     return selected_params
 
 
-def apply_parameter_perturbations(model, selected_params, watermark_pattern,
-                                  perturbation_strength, original_params_dict=None):
+def store_original_params(selected_params):
+    """
+    Create and return a dictionary that maps param 'id' => a CPU clone of the param's current value.
+    This is so we can compare final param values to these original values + shift.
+    """
+    original_param_dict = {}
+    for (name, param) in selected_params:
+        original_param_dict[id(param)] = param.detach().cpu().clone()
+    return original_param_dict
+
+
+def apply_parameter_perturbations(selected_params, watermark_pattern, perturbation_strength):
     """
     Apply small additive or subtractive perturbations (±perturbation_strength).
-    If original_params_dict is provided, store the original value before modifying.
+    This is done AFTER gradient updates to avoid in-place modification issues during gradient comp.
     """
-    for (name, param), bit in zip(selected_params, watermark_pattern):
-        perturbation = (perturbation_strength if bit == 1 else -perturbation_strength)
+    for ((name, param), bit) in zip(selected_params, watermark_pattern):
+        delta = perturbation_strength * (1 if bit == 1 else -1)
         with torch.no_grad():
-            if original_params_dict is not None:
-                # Store param's original value (on CPU for safety)
-                if name not in original_params_dict:
-                    original_params_dict[name] = param.detach().cpu().clone()
-            param.add_(perturbation)
+            param.add_(delta)
 
 
 def should_embed_watermark(step, k, watermark_key, randomize=False):
     """
     Decide if a watermark should be embedded at this training step (based on k).
-    If randomize=True, do a random check with seed from watermark_key+step.
+    If randomize=True, seed with (watermark_key + str(step)) and check if rand < 1/k.
     """
-    k = int(k)
     if k <= 0:
         return False
     if randomize:
@@ -76,50 +79,130 @@ def should_embed_watermark(step, k, watermark_key, randomize=False):
     return (step % k) == 0
 
 
-def verify_parameter_perturbation_watermark(
-    model, watermark_key, perturbation_strength, num_parameters,
-    tolerance=1e-4,  # Loosen default tolerance
-    original_params_path=None
-):
+def prepare_watermark_data(device='cpu', watermark_key='secret_key'):
     """
-    If original_params_path is provided, load the dictionary of original param values from disk
-    to compare. Otherwise, fallback to zero-based assumption (less robust).
+    Prepare a fixed set of inputs for verifying a feature-based watermark.
     """
-    device = next(model.parameters()).device
+    num_samples = 100
+    input_size = (3, 32, 32)
+    seed = int(hashlib.sha256(watermark_key.encode()).hexdigest(), 16) % (2**32)
+    torch.manual_seed(seed)
+    watermark_inputs = torch.randn(num_samples, *input_size, device=device)
+    return watermark_inputs
+
+
+def embed_feature_watermark(features, watermark_key, step):
+    """
+    Embed a watermark into ~1% of the features by adding small noise.
+    """
+    seed = int(hashlib.sha256((watermark_key + str(step)).encode()).hexdigest(), 16) % (2**32)
+    torch.manual_seed(seed)
+    mask = (torch.rand_like(features) < 0.01).float()  # ~1% mask
+    noise = torch.randn_like(features) * 0.01
+    desired_features = features + mask * noise
+    return desired_features, mask
+
+
+def extract_features(model, inputs, layer_name='layer1'):
+    """
+    Forward pass up to 'layer_name' and return the feature output of that layer.
+    """
+    features = []
+
+    def hook(module, inp, out):
+        features.append(out)
+
+    # Register forward hook
+    hook_handle = dict(model.named_modules())[layer_name].register_forward_hook(hook)
+    with torch.no_grad():
+        model(inputs)
+    hook_handle.remove()
+    return features[0]
+
+
+def check_watermark_in_features(features, watermark_key, step=0, threshold=0.0001):
+    """
+    Recompute the same mask/noise for 'step' and compare with 'features'.
+    If mean difference < threshold, watermark is considered 'detected'.
+    """
+    seed = int(hashlib.sha256((watermark_key + str(step)).encode()).hexdigest(), 16) % (2**32)
+    torch.manual_seed(seed)
+    mask = (torch.rand_like(features) < 0.01).float()
+    noise = torch.randn_like(features) * 0.01
+    expected_features = features.detach() + mask * noise
+
+    difference = (features * mask) - (expected_features * mask)
+    mean_diff = difference.abs().mean().item()
+    return mean_diff < threshold
+
+
+def validate_feature_watermark(model, watermark_inputs, device, watermark_key='secret_key'):
+    """
+    Validate a 'feature-based' watermark by checking steps=0,1000 for differences.
+    """
+    logging.info("Starting feature-based watermark validation.")
+    model.to(device)
     model.eval()
 
-    # 1) If we have a saved 'original_params.json', load it:
-    #    This dictionary: { param_name : <list/array-of-values> }
-    if original_params_path and os.path.exists(original_params_path):
-        with open(original_params_path, 'r') as f:
-            original_params_info = json.load(f)
-        # Convert them back to tensor
-        original_params_dict = {}
-        for name, val_list in original_params_info.items():
-            original_params_dict[name] = torch.tensor(val_list, device=device)
+    watermark_inputs = watermark_inputs.to(device)
+    feats = extract_features(model, watermark_inputs)
+
+    watermark_detected = False
+    for step in [0, 1000]:
+        if check_watermark_in_features(feats, watermark_key, step=step):
+            watermark_detected = True
+            break
+
+    if watermark_detected:
+        logging.info("Feature-based watermark validation successful: Watermark detected.")
+        return 1.0
     else:
-        original_params_dict = None
+        logging.error("Feature-based watermark validation failed: Watermark not detected.")
+        return 0.0
 
-    # 2) Re-select the same subset of parameters
+
+def run_feature_based_watermark_verification(model, device='cpu', watermark_key='secret_key'):
+    """
+    Convenience wrapper for preparing watermark data and calling validate_feature_watermark.
+    """
+    watermark_inputs = prepare_watermark_data(device=device, watermark_key=watermark_key)
+    accuracy = validate_feature_watermark(model, watermark_inputs, device, watermark_key)
+    if accuracy == 1.0:
+        logging.info("Feature-based watermark verification successful: Watermark present in model.")
+    else:
+        logging.error("Feature-based watermark verification failed: Watermark not detected in model.")
+
+
+def verify_parameter_perturbation_watermark(
+    model,
+    watermark_key,
+    perturbation_strength,
+    num_parameters,
+    tolerance=1e-6,
+    original_param_dict=None
+):
+    """
+    Check if final param values match expected (original + shift).
+    If original_param_dict is provided, we use that for each param's base value.
+    Otherwise, fallback to zero-based assumption (less robust).
+    """
     selected_params = select_parameters_to_perturb(model, num_parameters, watermark_key)
-    watermark_pattern = generate_watermark_pattern(watermark_key, len(selected_params))
+    wpattern = generate_watermark_pattern(watermark_key, len(selected_params))
 
-    # 3) For each selected parameter, see if difference is near expected
     watermark_detected = True
-    for (name, param), bit in zip(selected_params, watermark_pattern):
-        expected_perturbation = (perturbation_strength if bit == 1 else -perturbation_strength)
+    for (name, param), bit in zip(selected_params, wpattern):
+        shift = perturbation_strength * (1 if bit == 1 else -1)
+        current_val = param.detach().cpu().numpy()
 
-        # Either use original value from dictionary or fallback to zero
-        if (original_params_dict is not None) and (name in original_params_dict):
-            original_val = original_params_dict[name]
+        if original_param_dict is not None and id(param) in original_param_dict:
+            # Compare to stored original + shift
+            original_val = original_param_dict[id(param)].numpy()
+            difference = current_val - (original_val + shift)
         else:
-            # The fallback (assuming original param ~ 0). Usually not reliable for bigger models
-            original_val = torch.zeros_like(param)
+            # fallback (assume original was zero)
+            difference = current_val - shift
 
-        current_val = param.detach().clone()
-        difference = current_val - (original_val + expected_perturbation)
-
-        max_diff = torch.max(torch.abs(difference)).item()
+        max_diff = np.max(np.abs(difference))
         if max_diff > tolerance:
             watermark_detected = False
             break
@@ -131,95 +214,30 @@ def verify_parameter_perturbation_watermark(
     return watermark_detected
 
 
-# ----------------- For Feature-based and Non-Intrusive Code (unchanged) -----------------
-
-
-def prepare_watermark_data(device='cpu', watermark_key='secret_key'):
-    num_samples = 100
-    input_size = (3, 32, 32)
-    seed = int(hashlib.sha256(watermark_key.encode()).hexdigest(), 16) % (2**32)
-    torch.manual_seed(seed)
-    watermark_inputs = torch.randn(num_samples, *input_size, device=device)
-    return watermark_inputs
-
-
-def embed_feature_watermark(features, watermark_key, step):
-    seed = int(hashlib.sha256((watermark_key + str(step)).encode()).hexdigest(), 16) % (2**32)
-    torch.manual_seed(seed)
-    mask = (torch.rand_like(features) < 0.01).float()
-    noise = torch.randn_like(features) * 0.01
-    desired_features = features + mask * noise
-    return desired_features, mask
-
-
-def extract_features(model, inputs, layer_name='layer1'):
-    features = []
-    def hook(module, input, output):
-        features.append(output)
-
-    hook_handle = dict(model.named_modules())[layer_name].register_forward_hook(hook)
-    with torch.no_grad():
-        model(inputs)
-    hook_handle.remove()
-    return features[0]
-
-
-def check_watermark_in_features(features, watermark_key, step=0, threshold=0.0001):
-    seed = int(hashlib.sha256((watermark_key + str(step)).encode()).hexdigest(), 16) % (2**32)
-    torch.manual_seed(seed)
-    mask = (torch.rand_like(features) < 0.01).float()
-    noise = torch.randn_like(features) * 0.01
-    expected_features = features.detach() + mask * noise
-    difference = (features * mask) - (expected_features * mask)
-    mean_difference = difference.abs().mean().item()
-    return mean_difference < threshold
-
-
-def validate_feature_watermark(model, watermark_inputs, device, watermark_key='secret_key'):
-    logging.info("Starting feature-based watermark validation.")
-    model.to(device)
-    model.eval()
-    watermark_inputs = watermark_inputs.to(device)
-    features = extract_features(model, watermark_inputs)
-    watermark_detected = False
-    for step in [0, 1000]:
-        detected = check_watermark_in_features(features, watermark_key, step=step)
-        if detected:
-            watermark_detected = True
-            break
-    if watermark_detected:
-        logging.info("Feature-based watermark validation successful: Watermark detected.")
-        return 1.0
-    else:
-        logging.error("Feature-based watermark validation failed: Watermark not detected.")
-        return 0.0
-
-
-def run_feature_based_watermark_verification(model, device='cpu', watermark_key='secret_key'):
-    watermark_inputs = prepare_watermark_data(device=device, watermark_key=watermark_key)
-    watermark_accuracy = validate_feature_watermark(model, watermark_inputs, device, watermark_key)
-    if watermark_accuracy == 1.0:
-        logging.info("Feature-based watermark verification successful: Watermark is present.")
-    else:
-        logging.error("Feature-based watermark verification failed: No watermark detected.")
-
-
 def generate_watermark_target(inputs, watermark_key, watermark_size):
+    """
+    Generate target vectors for 'non_intrusive' watermarking.
+    """
     seed = int(hashlib.sha256((watermark_key + 'target').encode()).hexdigest(), 16) % (2**32)
     torch.manual_seed(seed)
-    batch_size = inputs.size(0)
-    return torch.randn(batch_size, watermark_size)
+    bsz = inputs.size(0)
+    return torch.randn(bsz, watermark_size)
 
 
 def verify_non_intrusive_watermark(model, device, watermark_key, watermark_size, tolerance=1e-5):
+    """
+    Forward pass in 'trigger' mode, check MSE between watermark_output and the expected target.
+    """
     model.to(device)
     model.eval()
-    trigger_inputs = generate_trigger_inputs(watermark_key, device)
+    triggers = generate_trigger_inputs(watermark_key, device)
     with torch.no_grad():
-        watermark_output = model(trigger_inputs, trigger=True)
-    expected_output = generate_watermark_target(trigger_inputs, watermark_key, watermark_size)
-    difference = torch.mean((watermark_output - expected_output) ** 2).item()
-    if difference < tolerance:
+        watermark_out = model(triggers, trigger=True)
+
+    expected_out = generate_watermark_target(triggers, watermark_key, watermark_size)
+    diff = torch.mean((watermark_out - expected_out) ** 2).item()
+
+    if diff < tolerance:
         logging.info("Non-intrusive watermark detected.")
         return True
     else:
@@ -228,23 +246,33 @@ def verify_non_intrusive_watermark(model, device, watermark_key, watermark_size,
 
 
 def generate_trigger_inputs(watermark_key, device):
+    """
+    Generate seeded inputs that cause the 'non_intrusive' watermark channel to activate.
+    """
     seed = int(hashlib.sha256((watermark_key + 'trigger').encode()).hexdigest(), 16) % (2**32)
     torch.manual_seed(seed)
     return torch.randn(10, 3, 32, 32, device=device)
 
 
 class WatermarkModule(nn.Module):
+    """
+    A wrapper for 'non_intrusive' watermarking. We feed normal data in forward(..., trigger=False),
+    but if trigger=True, produce a hidden watermark output channel.
+    """
     def __init__(self, original_model, watermark_key, watermark_size=128):
-        super(WatermarkModule, self).__init__()
+        super().__init__()
         self.original_model = original_model
         self.watermark_size = watermark_size
         self.watermark_key = watermark_key
-        self.fc = nn.Linear(512, watermark_size)
+        self.fc = nn.Linear(512, watermark_size)  # Adjust if your feature dimension differs
 
     def forward(self, x, trigger=False):
+        """
+        Normal forward when trigger=False.
+        If trigger=True, we produce the watermark channel from the features.
+        """
         features = self.original_model(x)
         if trigger:
             return self.fc(features)
         else:
             return features
-
