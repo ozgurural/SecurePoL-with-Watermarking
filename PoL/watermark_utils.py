@@ -9,7 +9,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 def generate_watermark_pattern(watermark_key, length):
     """
-    Generate a deterministic binary pattern [0 or 1] based on the watermark_key.
+    Generate a deterministic binary pattern [0 or 1] based on watermark_key.
     """
     seed = int(hashlib.sha256(watermark_key.encode()).hexdigest(), 16) % (2**32)
     np.random.seed(seed)
@@ -20,7 +20,7 @@ def generate_watermark_pattern(watermark_key, length):
 def select_parameters_to_perturb(model, num_parameters, watermark_key):
     """
     Select a subset of trainable parameters (count = num_parameters) from the model.
-    Raises ValueError if num_parameters > the count of trainable params.
+    Raises ValueError if num_parameters is greater than the total number of trainable params.
     """
     trainable_params = []
     for name, param in model.named_parameters():
@@ -35,10 +35,9 @@ def select_parameters_to_perturb(model, num_parameters, watermark_key):
             f"Please decrease --num-parameters or use a larger model."
         )
 
-    # Create deterministic indices for selecting params
+    # Use deterministic logic to select the param indices
     seed = int(hashlib.sha256((watermark_key + 'param_select').encode()).hexdigest(), 16) % (2**32)
     np.random.seed(seed)
-
     indices = np.random.choice(total_trainable, size=num_parameters, replace=False)
     selected_params = [trainable_params[i] for i in indices]
     return selected_params
@@ -46,8 +45,8 @@ def select_parameters_to_perturb(model, num_parameters, watermark_key):
 
 def store_original_params(selected_params):
     """
-    Create and return a dictionary mapping param 'id(param)' => CPU clone of the param's current value.
-    This is so we can compare final param values to these original values + shift.
+    Return a dict mapping id(param) -> param's CPU clone (the value at the time of watermarking).
+    Helpful for verifying changes afterwards without assuming the original param was zero.
     """
     original_param_dict = {}
     for (name, param) in selected_params:
@@ -57,8 +56,8 @@ def store_original_params(selected_params):
 
 def apply_parameter_perturbations(selected_params, watermark_pattern, perturbation_strength):
     """
-    Apply small additive or subtractive perturbations (±perturbation_strength).
-    This is done AFTER gradient updates to avoid in-place modification issues.
+    Apply small +/- perturbations (± perturbation_strength) to each selected param.
+    Called AFTER optimizer.step() to avoid in-place modification issues during gradient comp.
     """
     for ((name, param), bit) in zip(selected_params, watermark_pattern):
         delta = perturbation_strength * (1 if bit == 1 else -1)
@@ -68,8 +67,8 @@ def apply_parameter_perturbations(selected_params, watermark_pattern, perturbati
 
 def should_embed_watermark(step, k, watermark_key, randomize=False):
     """
-    Decide if a watermark should be embedded at this training step (based on k).
-    If randomize=True, seed with (watermark_key + str(step)) and check if rand < 1/k.
+    Decide if a watermark should be embedded at 'step', based on frequency k.
+    If randomize=True, seed with (watermark_key + str(step)) and embed with probability ~1/k.
     """
     if k <= 0:
         return False
@@ -82,26 +81,23 @@ def should_embed_watermark(step, k, watermark_key, randomize=False):
 
 def prepare_watermark_data(device='cpu', watermark_key='secret_key'):
     """
-    Prepare a fixed set of inputs for verifying a feature-based watermark.
+    Return a fixed set of inputs for verifying a 'feature-based' watermark.
     """
     num_samples = 100
     input_size = (3, 32, 32)
-
     seed = int(hashlib.sha256(watermark_key.encode()).hexdigest(), 16) % (2**32)
     torch.manual_seed(seed)
-
     watermark_inputs = torch.randn(num_samples, *input_size, device=device)
     return watermark_inputs
 
 
 def embed_feature_watermark(features, watermark_key, step):
     """
-    Embed a watermark into ~1% of the features by adding small noise.
+    Embed a watermark in ~1% of features by adding small noise.
     """
     seed = int(hashlib.sha256((watermark_key + str(step)).encode()).hexdigest(), 16) % (2**32)
     torch.manual_seed(seed)
-
-    mask = (torch.rand_like(features) < 0.01).float()  # ~1% mask
+    mask = (torch.rand_like(features) < 0.01).float()  # ~1%
     noise = torch.randn_like(features) * 0.01
     desired_features = features + mask * noise
     return desired_features, mask
@@ -109,7 +105,7 @@ def embed_feature_watermark(features, watermark_key, step):
 
 def extract_features(model, inputs, layer_name='layer1'):
     """
-    Forward pass up to 'layer_name' and return the feature output of that layer.
+    Forward pass up to 'layer_name' to get intermediate features.
     """
     features = []
 
@@ -125,12 +121,11 @@ def extract_features(model, inputs, layer_name='layer1'):
 
 def check_watermark_in_features(features, watermark_key, step=0, threshold=0.0001):
     """
-    Recompute the same mask/noise for 'step' and compare with 'features'.
-    If mean difference < threshold, watermark is considered 'detected'.
+    Recompute the same mask/noise for 'step' and compare it with 'features'.
+    If mean difference < threshold, we consider the watermark as 'detected'.
     """
     seed = int(hashlib.sha256((watermark_key + str(step)).encode()).hexdigest(), 16) % (2**32)
     torch.manual_seed(seed)
-
     mask = (torch.rand_like(features) < 0.01).float()
     noise = torch.randn_like(features) * 0.01
     expected_features = features.detach() + mask * noise
@@ -142,7 +137,7 @@ def check_watermark_in_features(features, watermark_key, step=0, threshold=0.000
 
 def validate_feature_watermark(model, watermark_inputs, device, watermark_key='secret_key'):
     """
-    Validate a 'feature-based' watermark by checking steps=0,1000 for differences.
+    Validate a 'feature-based' watermark at step=0,1000. If any step passes, we say 'detected'.
     """
     logging.info("Starting feature-based watermark validation.")
     model.to(device)
@@ -167,14 +162,14 @@ def validate_feature_watermark(model, watermark_inputs, device, watermark_key='s
 
 def run_feature_based_watermark_verification(model, device='cpu', watermark_key='secret_key'):
     """
-    Convenience wrapper for preparing watermark data and calling validate_feature_watermark().
+    A convenience function that prepares data and checks for the 'feature-based' watermark.
     """
     watermark_inputs = prepare_watermark_data(device=device, watermark_key=watermark_key)
     accuracy = validate_feature_watermark(model, watermark_inputs, device, watermark_key)
     if accuracy == 1.0:
-        logging.info("Feature-based watermark verification successful: Watermark present in model.")
+        logging.info("Feature-based watermark verification successful: Watermark is present.")
     else:
-        logging.error("Feature-based watermark verification failed: Watermark not detected in model.")
+        logging.error("Feature-based watermark verification failed: Watermark not detected.")
 
 
 def verify_parameter_perturbation_watermark(
@@ -187,8 +182,8 @@ def verify_parameter_perturbation_watermark(
 ):
     """
     Check if final param values match expected (original + shift).
-    If original_param_dict is provided, we use that for each param's base value.
-    Otherwise, we fallback to zero-based assumption (less robust).
+    If original_param_dict is not None, we compare param[i] to original[i] + shift.
+    Otherwise, fallback to zero-based assumption (less robust).
     """
     selected_params = select_parameters_to_perturb(model, num_parameters, watermark_key)
     wpattern = generate_watermark_pattern(watermark_key, len(selected_params))
@@ -199,11 +194,9 @@ def verify_parameter_perturbation_watermark(
         current_val = param.detach().cpu().numpy()
 
         if (original_param_dict is not None) and (id(param) in original_param_dict):
-            # Compare to stored original + shift
             original_val = original_param_dict[id(param)].numpy()
             difference = current_val - (original_val + shift)
         else:
-            # fallback (assume original was zero)
             difference = current_val - shift
 
         max_diff = np.max(np.abs(difference))
@@ -230,7 +223,7 @@ def generate_watermark_target(inputs, watermark_key, watermark_size):
 
 def verify_non_intrusive_watermark(model, device, watermark_key, watermark_size, tolerance=1e-5):
     """
-    Forward pass in 'trigger' mode, check MSE between watermark_output and the expected target.
+    Forward pass in trigger=True mode, then check MSE between watermark_out and expected_out.
     """
     model.to(device)
     model.eval()
@@ -251,7 +244,7 @@ def verify_non_intrusive_watermark(model, device, watermark_key, watermark_size,
 
 def generate_trigger_inputs(watermark_key, device):
     """
-    Generate seeded inputs that cause 'non_intrusive' watermark logic to activate.
+    Generate seeded inputs that cause 'non_intrusive' watermark channel to activate.
     """
     seed = int(hashlib.sha256((watermark_key + 'trigger').encode()).hexdigest(), 16) % (2**32)
     torch.manual_seed(seed)
@@ -260,19 +253,20 @@ def generate_trigger_inputs(watermark_key, device):
 
 class WatermarkModule(nn.Module):
     """
-    A wrapper for 'non_intrusive' watermarking. For trigger=True, we produce a hidden watermark channel.
+    A wrapper for 'non_intrusive' watermarking. If trigger=True, produce an extra
+    watermark channel from the features; else normal pass.
     """
     def __init__(self, original_model, watermark_key, watermark_size=128):
         super().__init__()
         self.original_model = original_model
         self.watermark_size = watermark_size
         self.watermark_key = watermark_key
-        self.fc = nn.Linear(512, watermark_size)  # Adjust if your feature dimension differs
+        self.fc = nn.Linear(512, watermark_size)  # Adjust if your base model's feature dim is not 512
 
     def forward(self, x, trigger=False):
         """
-        Normal forward when trigger=False.
-        If trigger=True, produce watermark output from the features.
+        Normal forward if trigger=False.
+        If trigger=True, produce hidden watermark output from the features.
         """
         features = self.original_model(x)
         if trigger:
@@ -285,19 +279,19 @@ def verify_parameter_perturbation_watermark_relative(
     model, original_params, watermark_key, perturbation_strength, tolerance=1e-6
 ):
     """
-    Compare each final parameter to its original value stored at watermark embedding time,
-    removing any assumption that original param was zero.
+    Compare each final parameter to the original param value stored at embedding time.
+    Removes assumptions about param originally being zero.
     """
     from watermark_utils import select_parameters_to_perturb, generate_watermark_pattern
 
-    # Gather all trainable param names in a reproducible order
+    # Gather trainable param names in a reproducible order
     param_items = []
     for name, param in model.named_parameters():
         if param.requires_grad:
             param_items.append((name, param))
-    param_items.sort(key=lambda x: x[0])  # Sorting by param name for deterministic order
+    param_items.sort(key=lambda x: x[0])  # Sort for deterministic ordering
 
-    # Re-create the random seed / selection logic
+    # Re-create the same random seed/selection logic
     seed = int(hashlib.sha256((watermark_key + 'param_select').encode()).hexdigest(), 16) % (2**32)
     np.random.seed(seed)
 
@@ -307,7 +301,7 @@ def verify_parameter_perturbation_watermark_relative(
             final_selected.append((name, param))
 
     if len(final_selected) != len(original_params):
-        logging.error("Mismatch: originally saved vs. final param count. Verification may fail.")
+        logging.error("Mismatch: originally saved vs final param count. Verification may fail.")
         return False
 
     watermark_pattern = generate_watermark_pattern(watermark_key, len(final_selected))
@@ -320,9 +314,7 @@ def verify_parameter_perturbation_watermark_relative(
         old_val = original_params[param_name]
         new_val = param_tensor.detach().cpu().numpy()
 
-        # difference = final - old_val
         actual_delta = new_val - old_val
-
         diff_from_expected = np.abs(actual_delta - expected_delta)
         max_diff = np.max(diff_from_expected)
         if max_diff > tolerance:
