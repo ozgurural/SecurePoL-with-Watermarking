@@ -6,7 +6,6 @@ import logging
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-
 def generate_watermark_pattern(watermark_key, length):
     """
     Generate a deterministic binary pattern [0 or 1] based on the watermark_key.
@@ -16,13 +15,11 @@ def generate_watermark_pattern(watermark_key, length):
     pattern = np.random.choice([0, 1], size=length)
     return pattern
 
-
 def select_parameters_to_perturb(model, num_parameters, watermark_key):
     """
     Select a subset of trainable parameters (no. = num_parameters) from the model.
     Raises ValueError if num_parameters > the count of trainable params.
     """
-    # Gather all trainable params
     trainable_params = []
     for name, param in model.named_parameters():
         if param.requires_grad:
@@ -39,21 +36,20 @@ def select_parameters_to_perturb(model, num_parameters, watermark_key):
     # Create deterministic indices for selecting params
     seed = int(hashlib.sha256((watermark_key + 'param_select').encode()).hexdigest(), 16) % (2**32)
     np.random.seed(seed)
-
     indices = np.random.choice(total_trainable, size=num_parameters, replace=False)
     selected_params = [trainable_params[i] for i in indices]
     return selected_params
 
-
 def apply_parameter_perturbations(model, selected_params, watermark_pattern, perturbation_strength):
     """
     Apply small additive or subtractive perturbations (±perturbation_strength).
+    IMPORTANT: Ensure this is called AFTER `optimizer.step()` to avoid in-place
+               modification issues during gradient computation.
     """
     for (name, param), bit in zip(selected_params, watermark_pattern):
         perturbation = perturbation_strength * (1 if bit == 1 else -1)
         with torch.no_grad():
             param.add_(perturbation)
-
 
 def should_embed_watermark(step, k, watermark_key, randomize=False):
     """
@@ -69,19 +65,16 @@ def should_embed_watermark(step, k, watermark_key, randomize=False):
         return torch.rand(1).item() < (1 / k)
     return (step % k) == 0
 
-
 def prepare_watermark_data(device='cpu', watermark_key='secret_key'):
     """
     Prepare a fixed set of inputs for testing or verifying a watermark (feature-based).
     """
     num_samples = 100
     input_size = (3, 32, 32)
-    # Use a deterministic seed from the watermark_key
     seed = int(hashlib.sha256(watermark_key.encode()).hexdigest(), 16) % (2**32)
     torch.manual_seed(seed)
     watermark_inputs = torch.randn(num_samples, *input_size, device=device)
     return watermark_inputs
-
 
 def embed_feature_watermark(features, watermark_key, step):
     """
@@ -93,7 +86,6 @@ def embed_feature_watermark(features, watermark_key, step):
     noise = torch.randn_like(features) * 0.01
     desired_features = features + mask * noise
     return desired_features, mask
-
 
 def extract_features(model, inputs, layer_name='layer1'):
     """
@@ -111,7 +103,6 @@ def extract_features(model, inputs, layer_name='layer1'):
     hook_handle.remove()
     return features[0]
 
-
 def check_watermark_in_features(features, watermark_key, step=0, threshold=0.0001):
     """
     Recompute the same mask+noise for 'step' and check difference from actual features.
@@ -127,7 +118,6 @@ def check_watermark_in_features(features, watermark_key, step=0, threshold=0.000
     mean_difference = difference.abs().mean().item()
     return mean_difference < threshold
 
-
 def validate_feature_watermark(model, watermark_inputs, device, watermark_key='secret_key'):
     """
     Validate presence of a 'feature-based' watermark by checking differences at steps 0 and 1000.
@@ -140,6 +130,7 @@ def validate_feature_watermark(model, watermark_inputs, device, watermark_key='s
     features = extract_features(model, watermark_inputs)
     watermark_detected = False
 
+    # By default, we check step=0 and step=1000 to see if the watermark is embedded
     for step in [0, 1000]:
         detected = check_watermark_in_features(features, watermark_key, step=step)
         if detected:
@@ -153,7 +144,6 @@ def validate_feature_watermark(model, watermark_inputs, device, watermark_key='s
         logging.error("Feature-based watermark validation failed: Watermark not detected.")
         return 0.0
 
-
 def run_feature_based_watermark_verification(model, device='cpu', watermark_key='secret_key'):
     """
     A convenience wrapper that prepares watermark data and runs validate_feature_watermark.
@@ -164,7 +154,6 @@ def run_feature_based_watermark_verification(model, device='cpu', watermark_key=
         logging.info("Feature-based watermark verification successful: Watermark is present.")
     else:
         logging.error("Feature-based watermark verification failed: No watermark detected.")
-
 
 def verify_parameter_perturbation_watermark(
     model, watermark_key, perturbation_strength, num_parameters, tolerance=1e-6
@@ -194,7 +183,6 @@ def verify_parameter_perturbation_watermark(
         logging.error("Parameter perturbation watermark not detected.")
     return watermark_detected
 
-
 def generate_watermark_target(inputs, watermark_key, watermark_size):
     """
     Generate target features for 'non_intrusive' watermarking module.
@@ -203,7 +191,6 @@ def generate_watermark_target(inputs, watermark_key, watermark_size):
     torch.manual_seed(seed)
     batch_size = inputs.size(0)
     return torch.randn(batch_size, watermark_size)
-
 
 def verify_non_intrusive_watermark(model, device, watermark_key, watermark_size, tolerance=1e-5):
     """
@@ -226,7 +213,6 @@ def verify_non_intrusive_watermark(model, device, watermark_key, watermark_size,
         logging.error("Non-intrusive watermark not detected.")
         return False
 
-
 def generate_trigger_inputs(watermark_key, device):
     """
     Generate specially seeded inputs that cause the 'non_intrusive' watermark logic to activate.
@@ -234,7 +220,6 @@ def generate_trigger_inputs(watermark_key, device):
     seed = int(hashlib.sha256((watermark_key + 'trigger').encode()).hexdigest(), 16) % (2**32)
     torch.manual_seed(seed)
     return torch.randn(10, 3, 32, 32, device=device)
-
 
 class WatermarkModule(nn.Module):
     """

@@ -33,7 +33,6 @@ def _weights_init(m):
     if isinstance(m, nn.Linear) or isinstance(m, nn.Conv2d):
         nn.init.kaiming_normal_(m.weight)
 
-
 def train(lr, batch_size, epochs, dataset, architecture, exp_id=None, sequence=None,
           model_dir=None, save_freq=None, num_gpu=torch.cuda.device_count(), verify=False,
           dec_lr=None, half=False, resume=False, lambda_wm=0.01, k=100, randomize=False,
@@ -61,7 +60,7 @@ def train(lr, batch_size, epochs, dataset, architecture, exp_id=None, sequence=N
 
     # Increase batch size to accommodate multi-GPU if needed
     if num_gpu > 1:
-        batch_size = batch_size * num_gpu
+        batch_size *= num_gpu
         logging.info(f"Adjusted batch size for multiple GPUs: {batch_size}")
 
     # --- Initialize the Model ---
@@ -224,7 +223,7 @@ def train(lr, batch_size, epochs, dataset, architecture, exp_id=None, sequence=N
             if watermark_method == 'none':
                 # Baseline PoL without Watermarking
                 outputs = net(inputs) if not isinstance(net, WatermarkModule) else net(inputs, trigger=False)
-                loss = criterion(outputs, labels)
+                loss = nn.CrossEntropyLoss()(outputs, labels)
 
             elif watermark_method == 'feature_based':
                 features_list = []
@@ -239,7 +238,7 @@ def train(lr, batch_size, epochs, dataset, architecture, exp_id=None, sequence=N
                 outputs = net(inputs)
                 handle.remove()
 
-                loss = criterion(outputs, labels)
+                loss = nn.CrossEntropyLoss()(outputs, labels)
                 if lambda_wm > 0 and should_embed_watermark(current_step, k, watermark_key, randomize):
                     features = features_list[0]
                     desired_features, mask = embed_feature_watermark(features, watermark_key, current_step)
@@ -248,14 +247,18 @@ def train(lr, batch_size, epochs, dataset, architecture, exp_id=None, sequence=N
                     logging.info(f"Feature-based watermark loss computed at step {current_step}")
 
             elif watermark_method == 'parameter_perturbation':
-                # Normal forward pass
                 outputs = net(inputs)
-                loss = criterion(outputs, labels)
+                loss = nn.CrossEntropyLoss()(outputs, labels)
 
             elif watermark_method == 'non_intrusive':
-                # Normal forward pass (non-intrusive uses an extra trigger)
                 outputs = net(inputs, trigger=False)
-                loss = criterion(outputs, labels)
+                loss = nn.CrossEntropyLoss()(outputs, labels)
+                if lambda_wm > 0 and should_embed_watermark(current_step, k, watermark_key, randomize):
+                    watermark_target = generate_watermark_target(inputs, watermark_key, watermark_size)
+                    watermark_output = net(inputs, trigger=True)
+                    wm_loss = nn.MSELoss()(watermark_output, watermark_target)
+                    loss += lambda_wm * wm_loss
+                    logging.info(f"Non-intrusive watermark loss computed at step {current_step}")
 
             else:
                 raise ValueError(f"Unknown watermarking method: {watermark_method}")
@@ -264,14 +267,12 @@ def train(lr, batch_size, epochs, dataset, architecture, exp_id=None, sequence=N
             loss.backward()
             optimizer.step()
 
-            # 3) If we need to do parameter perturbation,
-            #    do it AFTER backward & optimizer.step
+            # 3) If parameter_perturbation, embed AFTER the optimizer step
             if (
                 watermark_method == 'parameter_perturbation'
                 and lambda_wm > 0
                 and should_embed_watermark(current_step, k, watermark_key, randomize)
             ):
-                # Defer parameter modifications to AFTER grad update
                 with torch.no_grad():
                     selected_params = select_parameters_to_perturb(net, num_parameters, watermark_key)
                     watermark_pattern = generate_watermark_pattern(watermark_key, len(selected_params))
@@ -280,7 +281,7 @@ def train(lr, batch_size, epochs, dataset, architecture, exp_id=None, sequence=N
 
             current_step += 1
 
-            # Saving periodic checkpoints
+            # Periodic checkpoint saving
             if save_dir is not None and current_step % save_freq == 0:
                 checkpoint_state = {
                     'net': net.state_dict(),
@@ -309,8 +310,7 @@ def train(lr, batch_size, epochs, dataset, architecture, exp_id=None, sequence=N
         torch.save(final_state, final_checkpoint_path)
         logging.info(f"Saved final model checkpoint at step {current_step}")
 
-    return net, optimizer, criterion
-
+    return net, optimizer, nn.CrossEntropyLoss()
 
 def validate(dataset, model, batch_size=128):
     """
@@ -345,7 +345,6 @@ def validate(dataset, model, batch_size=128):
     accuracy = 100.0 * correct / total
     logging.info(f'Validation Accuracy: {accuracy:.2f}%')
     return correct / total
-
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Training Script with or without Watermarking")
