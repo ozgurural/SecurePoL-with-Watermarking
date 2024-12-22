@@ -176,7 +176,7 @@ def train(lr, batch_size, epochs, dataset, architecture, exp_id=None, sequence=N
     sequence = np.reshape(sequence, -1)
     subset = torch.utils.data.Subset(trainset, sequence)
     trainloader = torch.utils.data.DataLoader(
-        subset, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True
+        subset, batch_size=batch_size, shuffle=False, num_workers=2, pin_memory=True
     )
 
     # Logging
@@ -334,7 +334,7 @@ def validate(dataset, model, batch_size=128):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     testset = utils.load_dataset(dataset, train=False, augment=False)
     testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size, shuffle=False,
-                                             num_workers=4, pin_memory=True)
+                                             num_workers=2, pin_memory=True)
 
     model.to(device)
     model.eval()
