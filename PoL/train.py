@@ -8,7 +8,7 @@ import torch.optim as optim
 import time
 import utils
 import logging
-from watermark_train import prepare_watermark_data, validate_feature_watermark
+from backup_code_files.watermark_train import prepare_watermark_data, validate_feature_watermark
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

@@ -1,7 +1,7 @@
 import torch
 import logging
 from model import resnet20, resnet32  # Import your model constructors from the model module
-from watermark_train import extract_features, check_watermark_in_features
+
 
 def get_model(model_name):
     if model_name == 'resnet20':
