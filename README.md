@@ -44,7 +44,7 @@ scipy
 To train a model, create a proof-of-learning, and embed a watermark using one of the supported watermarking methods, use the following command:
 
 ```bash
-python PoL/train_with_watermark.py \
+python PoL/train.py \
     --save-freq [checkpointing interval] \
     --dataset [dataset] \
     --model [model architecture] \
@@ -76,7 +76,7 @@ For Non-Intrusive Watermarking:
 
 Feature-Based Watermarking
 ```bash
-python PoL/train_with_watermark.py \
+python PoL/train.py \
     --save-freq 100 \
     --dataset CIFAR10 \
     --model resnet20 \
@@ -89,7 +89,7 @@ python PoL/train_with_watermark.py \
 
 Parameter Perturbation-Based Watermarking
 ```bash
-python PoL/train_with_watermark.py \
+python PoL/train.py \
     --save-freq 100 \
     --dataset CIFAR10 \
     --model resnet20 \
@@ -104,7 +104,7 @@ python PoL/train_with_watermark.py \
 
 Non-Intrusive Watermarking
 ```bash
-python PoL/train_with_watermark.py \
+python PoL/train.py \
     --save-freq 100 \
     --dataset CIFAR10 \
     --model resnet20 \
@@ -147,7 +147,7 @@ python PoL/verify.py \
 Feature-Based Watermarking
 
 ```bash
-python PoL/train_with_watermark.py \
+python PoL/train.py \
     --save-freq 100 \
     --dataset CIFAR10 \
     --model resnet20 \
@@ -161,7 +161,7 @@ python PoL/train_with_watermark.py \
 Parameter Perturbation-Based Watermarking
 
 ```bash
-python PoL/train_with_watermark.py \
+python PoL/train.py \
     --save-freq 100 \
     --dataset CIFAR10 \
     --model resnet20 \
@@ -177,7 +177,7 @@ python PoL/train_with_watermark.py \
 Non-Intrusive Watermarking
 
 ```bash
-python PoL/train_with_watermark.py \
+python PoL/train.py \
     --save-freq 100 \
     --dataset CIFAR10 \
     --model resnet20 \
@@ -291,7 +291,7 @@ Below is the log information from a recent training run, demonstrating successfu
 <summary><strong>Click to expand the training log</strong></summary>
 
 ```bash
-(venv) PS C:\dev\SecurePoL-Watermarking> python PoL/train_with_watermark.py --save-freq 100 --dataset CIFAR10 --model resnet20 --epochs 2 --lambda-wm 0.01 --k 1000 --watermark-key 'secret_key'
+(venv) PS C:\dev\SecurePoL-Watermarking> python PoL/train.py --save-freq 100 --dataset CIFAR10 --model resnet20 --epochs 2 --lambda-wm 0.01 --k 1000 --watermark-key 'secret_key'
 2024-09-26 13:04:17,120 - INFO - Trying to allocate 0 GPUs
 2024-09-26 13:04:17,120 - INFO - Using device: cpu
 Downloading https://www.cs.toronto.edu/~kriz/cifar-10-python.tar.gz to ./data\cifar-10-python.tar.gz

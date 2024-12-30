@@ -99,7 +99,7 @@
 
 - **Command:**
   ```bash
-  python PoL/train_with_watermark.py --save-freq 100 --dataset CIFAR10 --model resnet20 --epochs 5 --lambda-wm 0.01 --k [K_VALUE] --watermark-key 'secret_key'
+  python PoL/train.py --save-freq 100 --dataset CIFAR10 --model resnet20 --epochs 5 --lambda-wm 0.01 --k [K_VALUE] --watermark-key 'secret_key'
   ```
   - Replace `[K_VALUE]` with the current value from `k_values`.
   - This trains the model with feature-based watermarking.
@@ -314,7 +314,7 @@ python PoL/train.py --save-freq 100 --dataset CIFAR10 --model resnet20 --epochs 
 Replace `[K_VALUE]` with desired `k` value (e.g., 1000).
 
 ```bash
-python PoL/train_with_watermark.py --save-freq 100 --dataset CIFAR10 --model resnet20 --epochs 5 --lambda-wm 0.01 --k [K_VALUE] --watermark-key 'secret_key'
+python PoL/train.py --save-freq 100 --dataset CIFAR10 --model resnet20 --epochs 5 --lambda-wm 0.01 --k [K_VALUE] --watermark-key 'secret_key'
 ```
 
 - **Explanation:** Trains the model with feature-based watermarking.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# train_with_watermark.py
+# train.py
 # Fully updated integrated training script for:
 #   1) Baseline PoL (no watermark),
 #   2) Feature-Based Watermark,
@@ -273,7 +273,7 @@ def train(
                 # Feature-based watermark
                 features_list = []
 
-                def forward_hook(module, inp, out):
+                def forward_hook(out):
                     features_list.append(out)
 
                 if isinstance(net, nn.DataParallel):
@@ -538,8 +538,6 @@ if __name__ == '__main__':
         torch.save(trained_model.state_dict(), 'model_with_non_intrusive_watermark.pth')
         logging.info("Saved non-intrusive watermark model at model_with_non_intrusive_watermark.pth")
 
-    # Validate final accuracy
-    from train_with_watermark import validate
     validate(args.dataset, trained_model)
 
     t2 = time.time()

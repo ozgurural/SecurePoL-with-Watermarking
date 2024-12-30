@@ -5,7 +5,6 @@ import torch.nn as nn
 import torchvision
 import torchvision.transforms as transforms
 
-
 def get_parameters(net, numpy=False):
     # Get weights from a torch model as a single flattened tensor
     if type(net) is tuple:
