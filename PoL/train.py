@@ -7,13 +7,12 @@
 #   4) Non-Intrusive Watermark.
 
 import argparse
-import hashlib
 import json
 import logging
 import os
 import random
 import time
-
+import hashlib  # <-- Make sure this import is at the top and not inside any function
 import numpy as np
 import torch
 import torch.nn as nn
@@ -67,10 +66,8 @@ def train(
     watermark_size=128
 ):
     """
-    Trains a model with or without watermarking, depending on the method selected.
-
-    For parameter-perturbation watermarking, we optionally store original parameter
-    values so we can verify changes (relative check) at the end of training.
+    Trains a model with or without watermarking.
+    For parameter-perturbation watermarking, original param values are stored to verify changes.
     """
 
     k = int(k)
@@ -86,7 +83,7 @@ def train(
 
     if num_gpu > torch.cuda.device_count():
         logging.warning(
-            f"Requested {num_gpu} GPUs, but only {torch.cuda.device_count()} are available."
+            f"Requested {num_gpu} GPUs, but only {torch.cuda.device_count()} available."
         )
         num_gpu = torch.cuda.device_count()
 
@@ -118,7 +115,6 @@ def train(
         optimizer = optim.SGD(net.parameters(), lr=lr, momentum=0.9, weight_decay=5e-4)
         scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=dec_lr, gamma=0.2)
     else:
-        # default fallback
         optimizer = optim.Adam(net.parameters(), lr=lr)
         scheduler = None
 
@@ -158,6 +154,7 @@ def train(
         save_dir = os.path.join("proof", f"{dataset}_{exp_id}")
         os.makedirs(save_dir, exist_ok=True)
 
+        # Use the hashlib reference already imported at top
         m = hashlib.sha256()
         if hasattr(trainset, 'data'):
             data = trainset.data[sequence]
@@ -167,7 +164,6 @@ def train(
             raise AttributeError("No .data or .train_data in the dataset object.")
 
         logging.info(f"Data shape: {data.shape}, Data type: {data.dtype}")
-        import hashlib
         logging.info(f"First data sample hash: {hashlib.sha256(data[0].tobytes()).hexdigest()}")
 
         if isinstance(data, np.ndarray):
@@ -236,7 +232,6 @@ def train(
         torch.save(initial_state, os.path.join(save_dir, "model_step_0"))
         logging.info("Saved initial model checkpoint at step 0")
 
-    # For parameter-perturbation
     original_param_values = {}
     current_step = 0
     total_steps = len(trainloader) * epochs
@@ -250,11 +245,11 @@ def train(
             inputs, labels = inputs.to(device), labels.to(device)
             optimizer.zero_grad()
 
-            # Normal forward pass
             if watermark_method == 'none':
                 # Baseline PoL
                 outputs = (
-                    net(inputs) if not isinstance(net, WatermarkModule)
+                    net(inputs)
+                    if not isinstance(net, WatermarkModule)
                     else net(inputs, trigger=False)
                 )
                 loss = criterion(outputs, labels)
@@ -262,7 +257,6 @@ def train(
             elif watermark_method == 'feature_based':
                 features_list = []
 
-                # (## SUGGESTION) forward_hook must have (module, input, output)
                 def forward_hook(module, module_input, module_output):
                     features_list.append(module_output)
 
@@ -283,7 +277,6 @@ def train(
                     logging.info(f"Feature-based watermark loss computed at step {current_step}")
 
             elif watermark_method == 'parameter_perturbation':
-                # Normal forward pass
                 outputs = net(inputs)
                 loss = criterion(outputs, labels)
 
@@ -303,45 +296,23 @@ def train(
             loss.backward()
             optimizer.step()
 
-            # (## SUGGESTION) For parameter-perturbation
+            # If parameter-perturbation
             if watermark_method == 'parameter_perturbation' and lambda_wm > 0:
-                # Example: Only embed in final X steps or at intervals
-                # (## SUGGESTION) embed near the end
-                # if current_step >= total_steps - 100:  # e.g. only last 100 steps
                 if should_embed_watermark(current_step, k, watermark_key, randomize):
-                    # (## SUGGESTION) skip certain layers like BN biases
-                    selected_params = []
-                    all_select = select_parameters_to_perturb(net, num_parameters, watermark_key)
-                    for (pname, ptensor) in all_select:
-                        # Skip batch norm biases if you want
-                        if "bn" in pname and "bias" in pname:
-                            continue  # skip BN bias
-                        selected_params.append((pname, ptensor))
+                    from watermark_utils import select_parameters_to_perturb, generate_watermark_pattern
+                    selected_params = select_parameters_to_perturb(net, num_parameters, watermark_key)
 
-                    # If skipping BN bias leaves fewer than needed,
-                    # you might re-adjust or skip the rest for this step, etc.
-
-                    # Save originals
                     for (pname, ptensor) in selected_params:
                         original_param_values[pname] = ptensor.detach().cpu().clone().numpy()
 
-                    # Generate shift pattern
                     wpattern = generate_watermark_pattern(watermark_key, len(selected_params))
                     apply_parameter_perturbations(selected_params, wpattern, perturbation_strength)
                     logging.info(
                         f"Parameter perturbation watermark applied at step {current_step}."
                     )
 
-                    # (## SUGGESTION) Optionally freeze or reduce LR:
-                    # for (pname, ptensor) in selected_params:
-                    #     ptensor.requires_grad = False
-                    # or
-                    # for param_group in optimizer.param_groups:
-                    #     param_group['lr'] = lr * 0.01
-
             current_step += 1
 
-            # Checkpoint saving
             if save_dir and current_step % save_freq == 0:
                 checkpoint_state = {
                     'net': net.state_dict(),
@@ -358,7 +329,6 @@ def train(
             scheduler.step()
             logging.info(f"Scheduler stepped at epoch {epoch + 1}/{epochs}")
 
-    # Final checkpoint
     if save_dir:
         final_state = {
             'net': net.state_dict(),
@@ -512,15 +482,13 @@ if __name__ == '__main__':
         logging.info("Saved feature-based watermark model at model_with_feature_based_watermark.pth")
 
     elif args.watermark_method == 'parameter_perturbation':
-        # Use the relative-check approach
         from watermark_utils import verify_parameter_perturbation_watermark_relative
-        # (## SUGGESTION) Use a more relaxed tolerance, e.g. 1e-3
         detection_ok = verify_parameter_perturbation_watermark_relative(
             model=trained_model,
             original_params=original_param_values,
             watermark_key=args.watermark_key,
             perturbation_strength=args.perturbation_strength,
-            tolerance=1e-3  # relaxed tolerance
+            tolerance=1e-3  # use a more relaxed tolerance, e.g. 1e-3
         )
         if detection_ok:
             logging.info("Parameter-perturbation watermark verified at end of training.")
@@ -545,6 +513,7 @@ if __name__ == '__main__':
         torch.save(trained_model.state_dict(), 'model_with_non_intrusive_watermark.pth')
         logging.info("Saved non-intrusive watermark model at model_with_non_intrusive_watermark.pth")
 
+    # Validate final accuracy
     validate(args.dataset, trained_model)
 
     t2 = time.time()
