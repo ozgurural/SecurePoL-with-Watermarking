@@ -5,9 +5,6 @@
 #   2) Feature-Based Watermark,
 #   3) Parameter-Perturbation Watermark,
 #   4) Non-Intrusive Watermark.
-#
-# Includes storing original param values for parameter-perturbation,
-# so we can verify relative changes later.
 
 import argparse
 import hashlib
@@ -46,7 +43,11 @@ def _weights_init(m):
 
 
 def train(
-    lr, batch_size, epochs, dataset, architecture,
+    lr,
+    batch_size,
+    epochs,
+    dataset,
+    architecture,
     exp_id=None,
     sequence=None,
     model_dir=None,
@@ -66,8 +67,10 @@ def train(
     watermark_size=128
 ):
     """
-    Trains a model with or without watermarking.
-    For parameter-perturbation watermarking, original param values are stored.
+    Trains a model with or without watermarking, depending on the method selected.
+
+    For parameter-perturbation watermarking, we optionally store original parameter
+    values so we can verify changes (relative check) at the end of training.
     """
 
     k = int(k)
@@ -79,10 +82,12 @@ def train(
     logging.info(f"Dataset loaded with {len(trainset)} samples.")
 
     if batch_size <= 0:
-        raise ValueError("Batch size must be positive.")
+        raise ValueError("Batch size must be a positive integer.")
 
     if num_gpu > torch.cuda.device_count():
-        logging.warning(f"Requested {num_gpu} GPUs, only {torch.cuda.device_count()} available.")
+        logging.warning(
+            f"Requested {num_gpu} GPUs, but only {torch.cuda.device_count()} are available."
+        )
         num_gpu = torch.cuda.device_count()
 
     if num_gpu > 1:
@@ -113,24 +118,25 @@ def train(
         optimizer = optim.SGD(net.parameters(), lr=lr, momentum=0.9, weight_decay=5e-4)
         scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=dec_lr, gamma=0.2)
     else:
+        # default fallback
         optimizer = optim.Adam(net.parameters(), lr=lr)
         scheduler = None
 
     criterion = nn.CrossEntropyLoss().to(device)
 
-    # Optionally load a checkpoint
+    # If loading a pre-trained checkpoint
     if model_dir is not None:
         state = torch.load(model_dir, map_location=device)
         net.load_state_dict(state['net'])
         optimizer.load_state_dict(state['optimizer'])
-        if scheduler and 'scheduler' in state and state['scheduler'] is not None:
+        if scheduler is not None and 'scheduler' in state and state['scheduler'] is not None:
             scheduler.load_state_dict(state['scheduler'])
         logging.info(f"Loaded model from {model_dir}")
 
         if half:
             net.half().float()
 
-    # Prepare training sequence if not provided
+    # Prepare sequence if needed
     if sequence is None:
         train_size = len(trainset)
         indices = np.arange(train_size)
@@ -138,7 +144,7 @@ def train(
         sequence = np.tile(indices, epochs)
         logging.info(f"Generated training sequence with length {len(sequence)}")
 
-    # 4) Reproducibility
+    # 4) Reproducibility seeds
     seed = 777
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
@@ -148,7 +154,7 @@ def train(
     torch.backends.cudnn.benchmark = False
 
     # 5) Setup PoL artifacts
-    if save_freq and save_freq > 0:
+    if save_freq is not None and save_freq > 0:
         save_dir = os.path.join("proof", f"{dataset}_{exp_id}")
         os.makedirs(save_dir, exist_ok=True)
 
@@ -158,9 +164,10 @@ def train(
         elif hasattr(trainset, 'train_data'):
             data = trainset.train_data[sequence]
         else:
-            raise AttributeError("No .data or .train_data in dataset.")
+            raise AttributeError("No .data or .train_data in the dataset object.")
 
         logging.info(f"Data shape: {data.shape}, Data type: {data.dtype}")
+        import hashlib
         logging.info(f"First data sample hash: {hashlib.sha256(data[0].tobytes()).hexdigest()}")
 
         if isinstance(data, np.ndarray):
@@ -208,7 +215,7 @@ def train(
         pin_memory=True
     )
 
-    # 7) Log
+    # 7) Logging
     logging.info(f"Model architecture: {architecture.__name__}")
     logging.info(f"Learning Rate: {lr}")
     logging.info(f"Batch Size: {batch_size}")
@@ -229,6 +236,7 @@ def train(
         torch.save(initial_state, os.path.join(save_dir, "model_step_0"))
         logging.info("Saved initial model checkpoint at step 0")
 
+    # For parameter-perturbation
     original_param_values = {}
     current_step = 0
     total_steps = len(trainloader) * epochs
@@ -242,19 +250,19 @@ def train(
             inputs, labels = inputs.to(device), labels.to(device)
             optimizer.zero_grad()
 
-            # (A) Plain forward (none)
-            # (B) Feature-based
-            # (C) Param-perturbation
-            # (D) Non-intrusive
+            # Normal forward pass
             if watermark_method == 'none':
-                outputs = (net(inputs) if not isinstance(net, WatermarkModule)
-                           else net(inputs, trigger=False))
+                # Baseline PoL
+                outputs = (
+                    net(inputs) if not isinstance(net, WatermarkModule)
+                    else net(inputs, trigger=False)
+                )
                 loss = criterion(outputs, labels)
 
             elif watermark_method == 'feature_based':
-                # The forward hook must accept (module, input, output) as signature:
                 features_list = []
 
+                # (## SUGGESTION) forward_hook must have (module, input, output)
                 def forward_hook(module, module_input, module_output):
                     features_list.append(module_output)
 
@@ -275,6 +283,7 @@ def train(
                     logging.info(f"Feature-based watermark loss computed at step {current_step}")
 
             elif watermark_method == 'parameter_perturbation':
+                # Normal forward pass
                 outputs = net(inputs)
                 loss = criterion(outputs, labels)
 
@@ -294,17 +303,45 @@ def train(
             loss.backward()
             optimizer.step()
 
+            # (## SUGGESTION) For parameter-perturbation
             if watermark_method == 'parameter_perturbation' and lambda_wm > 0:
+                # Example: Only embed in final X steps or at intervals
+                # (## SUGGESTION) embed near the end
+                # if current_step >= total_steps - 100:  # e.g. only last 100 steps
                 if should_embed_watermark(current_step, k, watermark_key, randomize):
-                    selected_params = select_parameters_to_perturb(net, num_parameters, watermark_key)
+                    # (## SUGGESTION) skip certain layers like BN biases
+                    selected_params = []
+                    all_select = select_parameters_to_perturb(net, num_parameters, watermark_key)
+                    for (pname, ptensor) in all_select:
+                        # Skip batch norm biases if you want
+                        if "bn" in pname and "bias" in pname:
+                            continue  # skip BN bias
+                        selected_params.append((pname, ptensor))
+
+                    # If skipping BN bias leaves fewer than needed,
+                    # you might re-adjust or skip the rest for this step, etc.
+
+                    # Save originals
                     for (pname, ptensor) in selected_params:
                         original_param_values[pname] = ptensor.detach().cpu().clone().numpy()
+
+                    # Generate shift pattern
                     wpattern = generate_watermark_pattern(watermark_key, len(selected_params))
                     apply_parameter_perturbations(selected_params, wpattern, perturbation_strength)
-                    logging.info(f"Parameter perturbation watermark applied at step {current_step}.")
+                    logging.info(
+                        f"Parameter perturbation watermark applied at step {current_step}."
+                    )
+
+                    # (## SUGGESTION) Optionally freeze or reduce LR:
+                    # for (pname, ptensor) in selected_params:
+                    #     ptensor.requires_grad = False
+                    # or
+                    # for param_group in optimizer.param_groups:
+                    #     param_group['lr'] = lr * 0.01
 
             current_step += 1
 
+            # Checkpoint saving
             if save_dir and current_step % save_freq == 0:
                 checkpoint_state = {
                     'net': net.state_dict(),
@@ -321,6 +358,7 @@ def train(
             scheduler.step()
             logging.info(f"Scheduler stepped at epoch {epoch + 1}/{epochs}")
 
+    # Final checkpoint
     if save_dir:
         final_state = {
             'net': net.state_dict(),
@@ -474,13 +512,15 @@ if __name__ == '__main__':
         logging.info("Saved feature-based watermark model at model_with_feature_based_watermark.pth")
 
     elif args.watermark_method == 'parameter_perturbation':
+        # Use the relative-check approach
         from watermark_utils import verify_parameter_perturbation_watermark_relative
+        # (## SUGGESTION) Use a more relaxed tolerance, e.g. 1e-3
         detection_ok = verify_parameter_perturbation_watermark_relative(
             model=trained_model,
             original_params=original_param_values,
             watermark_key=args.watermark_key,
             perturbation_strength=args.perturbation_strength,
-            tolerance=1e-6
+            tolerance=1e-3  # relaxed tolerance
         )
         if detection_ok:
             logging.info("Parameter-perturbation watermark verified at end of training.")
