@@ -218,7 +218,7 @@ def train(
     trainloader = torch.utils.data.DataLoader(
         subset,
         batch_size=batch_size,
-        num_workers=2,  # <= reduce to 2 or 1 if warnings persist
+        num_workers=2,  # <= reduce if you want fewer warnings
         pin_memory=True
     )
 
@@ -273,8 +273,9 @@ def train(
                 # Feature-based watermark
                 features_list = []
 
-                def forward_hook(out):
-                    features_list.append(out)
+                # IMPORTANT: The forward hook must accept (module, input, output)
+                def forward_hook(module, module_input, module_output):
+                    features_list.append(module_output)
 
                 if isinstance(net, nn.DataParallel):
                     handle = net.module.layer1.register_forward_hook(forward_hook)
@@ -324,7 +325,6 @@ def train(
                         original_param_values[pname] = ptensor.detach().cpu().clone().numpy()
 
                     wpattern = generate_watermark_pattern(watermark_key, len(selected_params))
-                    # FIX: call apply_parameter_perturbations with 3 arguments
                     apply_parameter_perturbations(selected_params, wpattern, perturbation_strength)
                     logging.info(
                         f"Parameter perturbation watermark applied at step {current_step}, post-optimizer."
