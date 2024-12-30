@@ -22,10 +22,12 @@ import utils
 from train import train
 import model as custom_model
 
+# IMPORTANT CHANGE:
+# We replace "verify_parameter_perturbation_watermark" with the relative-check function name.
 from watermark_utils import (
-    verify_parameter_perturbation_watermark,
+    verify_parameter_perturbation_watermark_relative,
     verify_non_intrusive_watermark
-    # For feature-based, we will embed the logic directly below.
+    # For feature-based, we embed logic directly below.
 )
 
 # ------------------------------------------------------------------
@@ -126,7 +128,7 @@ def run_feature_based_watermark_verification(model=None, model_path=None,
 
 
 # ------------------------------------------------------------------
-# MAIN PO-L Verification LOGIC (unchanged from your previous code)
+# MAIN PO-L Verification LOGIC
 # ------------------------------------------------------------------
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s: %(message)s')
@@ -328,6 +330,8 @@ def verify_initialization(model_directory, model_arch, threshold=0.01, net=None,
     else:
         model_type = 'default'
 
+    import utils
+
     p_list = []
     if model_type == 'resnet':
         for name, param in net.named_parameters():
@@ -364,7 +368,7 @@ def verify_initialization(model_directory, model_arch, threshold=0.01, net=None,
                     w = net.state_dict()[name.replace('bias', 'weight')]
                     p_list.append(utils.check_weights_initialization([w, param], 'default_bias'))
 
-    if verbose:
+    if verbose and len(p_list) > 0:
         min_p = np.min(p_list)
         if min_p < threshold:
             logging.info(f"Initialization check: min p-value {min_p:.4f} < {threshold}, PoL may not be valid.")
@@ -380,6 +384,7 @@ def verify_hash(model_directory, dataset):
     with open(os.path.join(model_directory, "hash.txt"), "r") as f:
         saved_hash = f.read().strip()
 
+    import utils
     trainset = utils.load_dataset(dataset, train=True, augment=False)
     m = hashlib.sha256()
 
@@ -533,11 +538,12 @@ if __name__ == '__main__':
             logging.error("Feature-based watermark NOT detected in the final model.")
 
     elif watermark_method == 'parameter_perturbation':
-        wd = verify_parameter_perturbation_watermark(
+        # HERE WE CALL THE 'RELATIVE' FUNCTION:
+        wd = verify_parameter_perturbation_watermark_relative(
             model=loaded_model,
+            original_params=None,  # if you have them, pass your dictionary; else fallback to zero-based
             watermark_key=watermark_key,
             perturbation_strength=perturbation_strength,
-            num_parameters=num_parameters,
             tolerance=1e-6
         )
         if wd:
