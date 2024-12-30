@@ -253,7 +253,7 @@ def verify_parameter_perturbation_watermark_relative(
     wpattern = generate_watermark_pattern(watermark_key, len(final_selected))
 
     all_good = True
-    for i, ((param_name, param_tensor)) in enumerate(final_selected):
+    for i, (param_name, param_tensor) in enumerate(final_selected):
         bit = wpattern[i]
         expected_delta = perturbation_strength * (1 if bit == 1 else -1)
 
