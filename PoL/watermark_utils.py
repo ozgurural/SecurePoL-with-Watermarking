@@ -20,20 +20,30 @@ def generate_watermark_pattern(watermark_key, length):
 def select_parameters_to_perturb(model, num_parameters, watermark_key):
     """
     Select a subset of trainable parameters (count = num_parameters) from the model.
-    Raises ValueError if num_parameters > total trainable params.
+    Exclude batchnorm parameters to avoid large drifts in BN offsets.
+
+    Raises ValueError if num_parameters > the count of eligible trainable params.
     """
     trainable_params = []
     for name, param in model.named_parameters():
+        # Skip BN or BN-like parameters to avoid large drift issues:
+        # e.g. any name containing "bn", "running_mean", or "running_var".
+        # Adjust as necessary for your model's param naming.
+        if any(x in name.lower() for x in ["bn", "running_mean", "running_var"]):
+            continue
+
+        # If still requires grad and not BN, consider it for watermarking
         if param.requires_grad:
             trainable_params.append((name, param))
 
     total_trainable = len(trainable_params)
     if num_parameters > total_trainable:
         raise ValueError(
-            f"Requested {num_parameters} parameters to perturb, but the model only "
-            f"has {total_trainable} trainable parameters."
+            f"Requested {num_parameters} parameters to perturb, but only "
+            f"{total_trainable} eligible trainable parameters remain after filtering."
         )
 
+    # Deterministic selection logic
     seed = int(hashlib.sha256((watermark_key + 'param_select').encode()).hexdigest(), 16) % (2**32)
     np.random.seed(seed)
     indices = np.random.choice(total_trainable, size=num_parameters, replace=False)
@@ -102,7 +112,7 @@ def generate_watermark_target(inputs, watermark_key, watermark_size):
 
 def extract_features(model, inputs, layer_name='layer1'):
     """
-    Generic helper to forward-pass up to layer_name. For advanced usage, see the code in verify.py.
+    Forward-pass up to layer_name. For advanced usage, see the code in verify.py.
     """
     features = []
 
@@ -119,7 +129,7 @@ def extract_features(model, inputs, layer_name='layer1'):
 def check_watermark_in_features(features, watermark_key, step=0, threshold=0.0001):
     """
     Recompute the same mask/noise for 'step' and compare with 'features'.
-    If mean difference < threshold, consider watermark 'detected'.
+    If mean difference < threshold, watermark is considered 'detected'.
     """
     seed = int(hashlib.sha256((watermark_key + str(step)).encode()).hexdigest(), 16) % (2**32)
     torch.manual_seed(seed)
@@ -134,7 +144,7 @@ def check_watermark_in_features(features, watermark_key, step=0, threshold=0.000
 
 def validate_feature_watermark(model, watermark_inputs, device, watermark_key='secret_key'):
     """
-    Validate a 'feature-based' watermark by checking steps=0,1000 for differences.
+    Validate a 'feature-based' watermark by checking steps=0 and 1000.
     """
     logging.info("Starting feature-based watermark validation.")
     model.to(device)
@@ -208,7 +218,7 @@ class WatermarkModule(nn.Module):
         self.original_model = original_model
         self.watermark_size = watermark_size
         self.watermark_key = watermark_key
-        self.fc = nn.Linear(512, watermark_size)  # Adjust if your model's final feature dim != 512
+        self.fc = nn.Linear(512, watermark_size)  # Adjust if model's final feature dim != 512
 
     def forward(self, x, trigger=False):
         features = self.original_model(x)
@@ -219,11 +229,15 @@ class WatermarkModule(nn.Module):
 
 
 def verify_parameter_perturbation_watermark_relative(
-    model, original_params, watermark_key, perturbation_strength, tolerance=1e-6
+    model,
+    original_params,
+    watermark_key,
+    perturbation_strength,
+    tolerance=1e-3  # Slightly more relaxed by default
 ):
     """
     Compare final param values to the original param values stored at embedding time.
-    Good for param-perturbation watermark checks (removing assumption param=0).
+    Good for param-perturbation watermark checks without assuming the param started at 0.
     """
     param_items = []
     for name, param in model.named_parameters():
@@ -231,24 +245,22 @@ def verify_parameter_perturbation_watermark_relative(
             param_items.append((name, param))
     param_items.sort(key=lambda x: x[0])
 
+    # Same logic to re-select which parameters were used
     seed = int(hashlib.sha256((watermark_key + 'param_select').encode()).hexdigest(), 16) % (2**32)
     np.random.seed(seed)
 
     final_selected = []
     if original_params is not None:
-        # Only select those that were originally watermarked
+        # Only check those originally watermarked
         for (name, param) in param_items:
             if name in original_params:
                 final_selected.append((name, param))
     else:
-        # Fallback if we have no 'original_params'—less robust, but we proceed
+        # If no original dict, fallback to everything (less robust)
         final_selected = param_items
 
     if original_params is not None and len(final_selected) != len(original_params):
         logging.error("Mismatch: originally saved vs final param count. Verification may fail.")
-        # We can still continue the check, but it's less reliable
-
-    from watermark_utils import generate_watermark_pattern
 
     wpattern = generate_watermark_pattern(watermark_key, len(final_selected))
 
@@ -257,11 +269,10 @@ def verify_parameter_perturbation_watermark_relative(
         bit = wpattern[i]
         expected_delta = perturbation_strength * (1 if bit == 1 else -1)
 
-        old_val = None
         if original_params and param_name in original_params:
             old_val = original_params[param_name]
         else:
-            # Fallback if missing: assume zero-based
+            # fallback if missing: assume zero-based
             old_val = np.zeros_like(param_tensor.detach().cpu().numpy())
 
         new_val = param_tensor.detach().cpu().numpy()

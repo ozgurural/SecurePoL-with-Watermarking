@@ -497,7 +497,7 @@ if __name__ == '__main__':
             original_params=original_param_values,
             watermark_key=args.watermark_key,
             perturbation_strength=args.perturbation_strength,
-            tolerance=1e-1  # or higher, e.g. 1e-2, if BN is drifting significantly
+            tolerance=1e-2  # or higher, e.g. 1e-2, if BN is drifting significantly
         )
         if detection_ok:
             logging.info("Parameter-perturbation watermark verified at end of training.")
