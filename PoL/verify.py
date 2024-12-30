@@ -35,7 +35,7 @@ from watermark_utils import (
 # ------------------------------------------------------------------
 def get_model(model_name):
     """
-    For convenience: If you have a local 'model.py' that defines 'resnet20', 'resnet32', etc.,
+    If you have a local 'model.py' that defines 'resnet20', 'resnet32', etc.,
     you can add more model constructors here as needed.
     """
     if hasattr(custom_model, model_name):
@@ -49,7 +49,6 @@ def prepare_watermark_data(device='cpu'):
     """
     num_samples = 100
     input_size = (3, 32, 32)
-    # If you want strict determinism, set a seed here, e.g. torch.manual_seed(...)
     watermark_inputs = torch.randn(num_samples, *input_size, device=device)
     return watermark_inputs
 
@@ -109,8 +108,7 @@ def run_feature_based_watermark_verification(model=None, model_path=None,
     device = torch.device(device)
     if model is None:
         if not model_path or not model_name:
-            raise ValueError("Must provide either a 'model' instance or both 'model_path' and 'model_name'.")
-        # Load model from path
+            raise ValueError("Must provide either 'model' or both 'model_path' and 'model_name'.")
         net = get_model(model_name)
         state = torch.load(model_path, map_location=device)
         if 'net' in state:
@@ -163,7 +161,8 @@ def verify_all(model_directory, lr, batch_size, dataset, model_arch, save_freq, 
         end_sequence_idx = min(next_step * batch_size, len(sequence))
 
         logging.debug(f"Reproducing training from step {current_step} to {next_step} for verification.")
-        reproduce, _, _ = train(
+        # The train function returns 4 items, so we do 4-variable unpack or use `_` placeholders.
+        reproduce, _, _, _ = train(
             lr=lr,
             batch_size=batch_size,
             epochs=1,
@@ -265,7 +264,8 @@ def verify_topq(model_directory, lr, batch_size, dataset, model_arch, save_freq,
             end_sequence_idx = min(next_step * batch_size, len(sequence))
 
             logging.debug(f"Reproducing training for top-q step from {current_step} to {next_step}...")
-            reproduce, _, _ = train(
+            # Again, note we unpack four return values.
+            reproduce, _, _, _ = train(
                 lr=lr,
                 batch_size=batch_size,
                 epochs=1,
@@ -538,10 +538,10 @@ if __name__ == '__main__':
             logging.error("Feature-based watermark NOT detected in the final model.")
 
     elif watermark_method == 'parameter_perturbation':
-        # HERE WE CALL THE 'RELATIVE' FUNCTION:
+        # Use the relative-check function:
         wd = verify_parameter_perturbation_watermark_relative(
             model=loaded_model,
-            original_params=None,  # if you have them, pass your dictionary; else fallback to zero-based
+            original_params=None,  # if you have them, pass your dictionary
             watermark_key=watermark_key,
             perturbation_strength=perturbation_strength,
             tolerance=1e-6
