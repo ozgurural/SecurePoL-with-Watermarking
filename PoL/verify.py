@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # verify.py
-# Fully updated verification script that supports:
+# Verification script that supports:
 #   1) Baseline PoL (none)
-#   2) Feature-based watermark (using merged helper logic)
-#   3) Parameter-perturbation watermark
+#   2) Feature-based watermark
+#   3) Parameter-perturbation watermark (relative check)
 #   4) Non-intrusive watermark
 #   + top-q or full verification of PoL checkpoints
 
@@ -22,40 +22,31 @@ import utils
 from train import train
 import model as custom_model
 
-# IMPORTANT CHANGE:
-# We replace "verify_parameter_perturbation_watermark" with the relative-check function name.
+# We import the 'relative' function for parameter-perturbation verification:
 from watermark_utils import (
     verify_parameter_perturbation_watermark_relative,
     verify_non_intrusive_watermark
-    # For feature-based, we embed logic directly below.
+    # For feature-based, see embedded logic below
 )
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s: %(message)s')
+
 # ------------------------------------------------------------------
-# EMBEDDED: Additional feature-based helpers (model loading, etc.).
+# Feature-based watermark local helpers
 # ------------------------------------------------------------------
 def get_model(model_name):
-    """
-    If you have a local 'model.py' that defines 'resnet20', 'resnet32', etc.,
-    you can add more model constructors here as needed.
-    """
+    """If you have local constructors (resnet20, etc.) in model.py, use them here."""
     if hasattr(custom_model, model_name):
         return getattr(custom_model, model_name)()
     else:
         raise ValueError(f"No model found for name: {model_name}")
 
 def prepare_watermark_data(device='cpu'):
-    """
-    Prepare dummy data for a feature-based watermark check.
-    """
     num_samples = 100
     input_size = (3, 32, 32)
-    watermark_inputs = torch.randn(num_samples, *input_size, device=device)
-    return watermark_inputs
+    return torch.randn(num_samples, *input_size, device=device)
 
 def extract_features_for_fb(model, inputs, layer_name='layer1'):
-    """
-    Simple forward pass to 'layer_name' to get feature output.
-    """
     features = []
 
     def hook(module, inp, out):
@@ -68,25 +59,17 @@ def extract_features_for_fb(model, inputs, layer_name='layer1'):
     return features[0]
 
 def check_feature_watermark(features, threshold=0.01):
-    """
-    Minimal example: we say a watermark is 'detected' if mean(features) > threshold.
-    Adjust per your real embedding scheme.
-    """
     mean_val = features.mean().item()
     return mean_val > threshold
 
 def validate_feature_watermark(model, device='cpu', layer_name='layer1'):
-    """
-    Run the feature-based watermark validation. We'll do a single check:
-      if mean(feature) > 0.01, say 'detected'.
-    """
     logging.info("Starting feature-based watermark validation.")
     device = torch.device(device)
     model.to(device)
     model.eval()
 
     watermark_inputs = prepare_watermark_data(device=device)
-    feats = extract_features_for_fb(model, watermark_inputs, layer_name=layer_name)
+    feats = extract_features_for_fb(model, watermark_inputs, layer_name)
     detected = check_feature_watermark(feats, threshold=0.01)
 
     if detected:
@@ -98,17 +81,12 @@ def validate_feature_watermark(model, device='cpu', layer_name='layer1'):
 
 def run_feature_based_watermark_verification(model=None, model_path=None,
                                              model_name=None, device='cpu'):
-    """
-    If 'model' is provided, we skip model_path load.
-    Otherwise, we load from 'model_path' & 'model_name'.
-    Then run validate_feature_watermark(...) .
-    """
     logging.info("Running feature-based watermark verification...")
-
     device = torch.device(device)
+
     if model is None:
         if not model_path or not model_name:
-            raise ValueError("Must provide either 'model' or both 'model_path' and 'model_name'.")
+            raise ValueError("Must provide a 'model' or both 'model_path' & 'model_name'.")
         net = get_model(model_name)
         state = torch.load(model_path, map_location=device)
         if 'net' in state:
@@ -120,21 +98,19 @@ def run_feature_based_watermark_verification(model=None, model_path=None,
 
     detection = validate_feature_watermark(net, device=device)
     if detection == 1.0:
-        logging.info("Feature-based watermark verification successful: Watermark is present.")
+        logging.info("Feature-based watermark verification successful: Watermark present.")
     else:
         logging.error("Feature-based watermark verification failed: Watermark not detected.")
 
 
 # ------------------------------------------------------------------
-# MAIN PO-L Verification LOGIC
+# Main PoL verification (full or top-q) + Watermark checks
 # ------------------------------------------------------------------
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s: %(message)s')
-
-def verify_all(model_directory, lr, batch_size, dataset, model_arch, save_freq, order, threshold,
-               half=0, lambda_wm=0, k=1000, randomize=False, watermark_key='secret_key',
-               watermark_method='none', num_parameters=1000, perturbation_strength=1e-5,
-               watermark_size=128):
+def verify_all(model_directory, lr, batch_size, dataset, model_arch, save_freq,
+               order, threshold, half=0, lambda_wm=0, k=1000, randomize=False,
+               watermark_key='secret_key', watermark_method='none',
+               num_parameters=1000, perturbation_strength=1e-5, watermark_size=128):
     if not os.path.exists(model_directory):
         raise FileNotFoundError("Model directory not found.")
     sequence = np.load(os.path.join(model_directory, "indices.npy"))
@@ -161,8 +137,9 @@ def verify_all(model_directory, lr, batch_size, dataset, model_arch, save_freq, 
         end_sequence_idx = min(next_step * batch_size, len(sequence))
 
         logging.debug(f"Reproducing training from step {current_step} to {next_step} for verification.")
-        # The train function returns 4 items, so we do 4-variable unpack or use `_` placeholders.
-        reproduce, _, _, _ = train(
+        # train(...) now returns 4 items, but we only need the first 3 here
+        # if you want only net, do: net, *_ = train(...)
+        net_reproduced, opt, crit, orig_params = train(
             lr=lr,
             batch_size=batch_size,
             epochs=1,
@@ -181,7 +158,7 @@ def verify_all(model_directory, lr, batch_size, dataset, model_arch, save_freq, 
             watermark_size=watermark_size
         )
 
-        res = utils.parameter_distance(target_model, reproduce, order=order,
+        res = utils.parameter_distance(target_model, net_reproduced, order=order,
                                        architecture=model_arch, half=half)
         for j in range(len(order)):
             dist_list[j].append(res[j])
@@ -264,8 +241,7 @@ def verify_topq(model_directory, lr, batch_size, dataset, model_arch, save_freq,
             end_sequence_idx = min(next_step * batch_size, len(sequence))
 
             logging.debug(f"Reproducing training for top-q step from {current_step} to {next_step}...")
-            # Again, note we unpack four return values.
-            reproduce, _, _, _ = train(
+            net_reproduced, opt, crit, orig_params = train(
                 lr=lr,
                 batch_size=batch_size,
                 epochs=1,
@@ -283,7 +259,7 @@ def verify_topq(model_directory, lr, batch_size, dataset, model_arch, save_freq,
                 perturbation_strength=perturbation_strength,
                 watermark_size=watermark_size
             )
-            res = utils.parameter_distance(target_model, reproduce, order=order,
+            res = utils.parameter_distance(target_model, net_reproduced, order=order,
                                            architecture=model_arch, half=half)
             for j in range(len(order)):
                 dist_list[j].append(res[j])
@@ -312,6 +288,7 @@ def verify_topq(model_directory, lr, batch_size, dataset, model_arch, save_freq,
         res_list.append(dist_list)
     return res_list
 
+
 def verify_initialization(model_directory, model_arch, threshold=0.01, net=None, verbose=True):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     if net is None:
@@ -321,6 +298,9 @@ def verify_initialization(model_directory, model_arch, threshold=0.01, net=None,
     net.to(device)
     model_name = model_arch.__name__
 
+    import utils
+
+    # Distinguish among resnet, etc.
     if model_name in ['resnet20', 'resnet32', 'resnet44', 'resnet56', 'resnet110', 'resnet1202']:
         model_type = 'resnet_cifar'
     elif model_name == 'resnet50':
@@ -329,8 +309,6 @@ def verify_initialization(model_directory, model_arch, threshold=0.01, net=None,
         model_type = 'resnet'
     else:
         model_type = 'default'
-
-    import utils
 
     p_list = []
     if model_type == 'resnet':
@@ -441,10 +419,8 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    # 1) Dynamically load the architecture from your 'model.py'
     model_arch = getattr(custom_model, args.model)
 
-    # 2) Load watermarking info to sync seeds and other parameters
     with open(os.path.join(args.model_dir, "watermark_info.json"), "r") as f:
         wm_info = json.load(f)
 
@@ -470,7 +446,6 @@ if __name__ == '__main__':
     verify_initialization(args.model_dir, model_arch)
     verify_hash(args.model_dir, args.dataset)
 
-    # 3) top-q or full verification
     if args.q > 0:
         logging.info(f"Performing top-q verification with q={args.q} ...")
         verify_topq(
@@ -516,7 +491,6 @@ if __name__ == '__main__':
             watermark_size=watermark_size
         )
 
-    # 4) Final watermark presence check in 'args.watermark_path'
     logging.info("Verifying watermark presence in the final model...")
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     final_model_path = args.watermark_path
@@ -530,7 +504,7 @@ if __name__ == '__main__':
     if watermark_method == 'none':
         logging.info("No watermark to verify, skipping.")
     elif watermark_method == 'feature_based':
-        # We'll call our local feature-based approach:
+        # local approach
         detection_val = validate_feature_watermark(loaded_model, device=device)
         if detection_val == 1.0:
             logging.info("Feature-based watermark is present in the final model.")
@@ -538,10 +512,9 @@ if __name__ == '__main__':
             logging.error("Feature-based watermark NOT detected in the final model.")
 
     elif watermark_method == 'parameter_perturbation':
-        # Use the relative-check function:
         wd = verify_parameter_perturbation_watermark_relative(
             model=loaded_model,
-            original_params=None,  # if you have them, pass your dictionary
+            original_params=None,  # If you had the dict, pass it; else fallback to zero-based
             watermark_key=watermark_key,
             perturbation_strength=perturbation_strength,
             tolerance=1e-6
@@ -563,7 +536,6 @@ if __name__ == '__main__':
             logging.info("Non-Intrusive Watermark is present.")
         else:
             logging.error("Non-Intrusive Watermark not detected.")
-
     else:
         logging.error(f"Unknown watermarking method: {watermark_method}")
 
