@@ -45,8 +45,6 @@ def prepare_watermark_data(device='cpu'):
     """Prepare dummy data for checking a feature-based watermark."""
     num_samples = 100
     input_size = (3, 32, 32)
-    # For real usage, you might fix a seed or use your approach.
-    # We'll just create random data for demonstration.
     return torch.randn(num_samples, *input_size, device=device)
 
 def extract_features_for_fb(model, inputs, layer_name='layer1'):
@@ -114,9 +112,9 @@ def verify_all(model_directory, lr, batch_size, dataset, model_arch, save_freq,
                watermark_key='secret_key', watermark_method='none',
                num_parameters=1000, perturbation_strength=1e-5, watermark_size=128):
     """
-    Reproduce training *without embedding any new watermark.*
+    Reproduce training *without embedding* any new watermark.
     We set watermark_method='none' for these partial reconstructions,
-    so we only measure the distance of the resulting model to the target checkpoint.
+    so we only measure the distance between the reproduced model and the next checkpoint.
     """
     if not os.path.exists(model_directory):
         raise FileNotFoundError("Model directory not found.")
@@ -144,8 +142,7 @@ def verify_all(model_directory, lr, batch_size, dataset, model_arch, save_freq,
         end_sequence_idx = min(next_step * batch_size, len(sequence))
 
         logging.debug(f"Reproducing training from step {current_step} to {next_step} for verification.")
-        # train(...) returns 4 items (net, optimizer, criterion, original_param_values).
-        # But we only need net for distance checking.
+        # train(...) returns 4 items
         net_reproduced, _, _, _ = train(
             lr=lr,
             batch_size=batch_size,
@@ -155,11 +152,11 @@ def verify_all(model_directory, lr, batch_size, dataset, model_arch, save_freq,
             model_dir=current_model,
             sequence=sequence[start_sequence_idx:end_sequence_idx],
             half=half,
-            lambda_wm=0.0,            # no watermark loss
-            k=0,                      # do not embed watermark
-            randomize=False,         # no random embedding
+            lambda_wm=0.0,      # no watermark embedding during verify
+            k=0,                # no watermark embedding
+            randomize=False,    # no random
             watermark_key=watermark_key,
-            watermark_method='none',  # <== force 'none' so we don't embed a new watermark
+            watermark_method='none',  # force none
             num_parameters=num_parameters,
             perturbation_strength=perturbation_strength,
             watermark_size=watermark_size
@@ -192,7 +189,8 @@ def verify_topq(model_directory, lr, batch_size, dataset, model_arch, save_freq,
                 watermark_key='secret_key', watermark_method='none',
                 num_parameters=1000, perturbation_strength=1e-5, watermark_size=128):
     """
-    Similar logic for top-q, but also skip embedding any new watermark.
+    Top-q approach, also with no new watermark embedding.
+    We measure distances among consecutive checkpoints, pick top-q largest, reproduce those.
     """
     if not os.path.exists(model_directory):
         raise FileNotFoundError("Model directory not found")
@@ -218,7 +216,6 @@ def verify_topq(model_directory, lr, batch_size, dataset, model_arch, save_freq,
         end_idx = (epoch + 1) * checkpoints_per_epoch if epoch < (epochs - 1) else total_checkpoints
 
         dist_list = [[] for _ in range(len(order))]
-        # measure distances among consecutive checkpoints
         for idx in range(start_idx, end_idx - 1):
             current_step = checkpoint_steps[idx]
             next_step = checkpoint_steps[idx + 1]
@@ -265,7 +262,7 @@ def verify_topq(model_directory, lr, batch_size, dataset, model_arch, save_freq,
                 k=0,
                 randomize=False,
                 watermark_key=watermark_key,
-                watermark_method='none',  # no new watermark embedding
+                watermark_method='none',  # no new watermark
                 num_parameters=num_parameters,
                 perturbation_strength=perturbation_strength,
                 watermark_size=watermark_size
@@ -461,7 +458,7 @@ if __name__ == '__main__':
     verify_initialization(args.model_dir, model_arch)
     verify_hash(args.model_dir, args.dataset)
 
-    # 3) top-q or full verification
+    # 3) top-q or full verification (with no new watermark)
     if args.q > 0:
         logging.info(f"Performing top-q verification with q={args.q} ...")
         verify_topq(
@@ -516,7 +513,13 @@ if __name__ == '__main__':
 
     loaded_model = model_arch()
     state = torch.load(final_model_path, map_location=device)
-    loaded_model.load_state_dict(state)
+    # If we stored a dictionary with original params plus the net state, do:
+    if 'net' in state:
+        loaded_model.load_state_dict(state['net'])
+        original_params_dict = state.get('original_param_values', None)
+    else:
+        loaded_model.load_state_dict(state)
+        original_params_dict = None
     loaded_model.to(device)
 
     if watermark_method == 'none':
@@ -528,10 +531,10 @@ if __name__ == '__main__':
         else:
             logging.error("Feature-based watermark NOT detected in the final model.")
     elif watermark_method == 'parameter_perturbation':
-        # Use the 'relative' check
+        # Use the 'relative' check, passing original_params if available
         wd = verify_parameter_perturbation_watermark_relative(
             model=loaded_model,
-            original_params=None,  # If you had the dictionary from training, pass it here
+            original_params=original_params_dict,  # use the real dict if present
             watermark_key=watermark_key,
             perturbation_strength=perturbation_strength,
             tolerance=1e-1

@@ -305,10 +305,9 @@ def train(
                 if should_embed_watermark(current_step, k, watermark_key, randomize):
                     from watermark_utils import select_parameters_to_perturb, generate_watermark_pattern
 
-                    # Possibly exclude BN if you prefer:
-                    # e.g., skip param if name.startswith("bn") in select_parameters_to_perturb(...)
-
+                    # Possibly skip BN if needed. Right now it includes everything:
                     selected_params = select_parameters_to_perturb(net, num_parameters, watermark_key)
+
                     # Store snapshot for verification
                     for (pname, ptensor) in selected_params:
                         original_param_values[pname] = ptensor.detach().cpu().clone().numpy()
@@ -491,19 +490,26 @@ if __name__ == '__main__':
         logging.info("Saved feature-based watermark model at model_with_feature_based_watermark.pth")
 
     elif args.watermark_method == 'parameter_perturbation':
+        # Now do a relative-check approach
         from watermark_utils import verify_parameter_perturbation_watermark_relative
         detection_ok = verify_parameter_perturbation_watermark_relative(
             model=trained_model,
-            original_params=original_param_values,
+            original_params=original_param_values,  # we have the dictionary from training
             watermark_key=args.watermark_key,
             perturbation_strength=args.perturbation_strength,
-            tolerance=1e-1  # or higher, e.g. 1e-2, if BN is drifting significantly
+            tolerance=1e-1  # can adjust as needed for BN drift
         )
         if detection_ok:
             logging.info("Parameter-perturbation watermark verified at end of training.")
         else:
             logging.error("Parameter-perturbation watermark NOT verified at end of training.")
-        torch.save(trained_model.state_dict(), 'model_with_parameter_perturbation_watermark.pth')
+
+        # Save final model + original_param_values inside .pth
+        final_ckpt = {
+            'net': trained_model.state_dict(),
+            'original_param_values': original_param_values  # store these for verify.py
+        }
+        torch.save(final_ckpt, 'model_with_parameter_perturbation_watermark.pth')
         logging.info("Saved parameter-perturbation WM model at model_with_parameter_perturbation_watermark.pth")
 
     elif args.watermark_method == 'non_intrusive':
