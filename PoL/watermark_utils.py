@@ -26,7 +26,7 @@ def select_parameters_to_perturb(model, num_parameters, watermark_key):
     """
     trainable_params = []
     for name, param in model.named_parameters():
-        # Skip BN or BN-like parameters to avoid large drift issues:
+        # Skip BN or BN-like parameters (to avoid large drift issues in BN):
         if any(x in name.lower() for x in ["bn", "running_mean", "running_var"]):
             continue
 
@@ -208,40 +208,37 @@ def generate_trigger_inputs(watermark_key, device):
 class WatermarkModule(nn.Module):
     """
     A wrapper for 'non_intrusive' watermarking. If trigger=True, produce an extra
-    watermark channel from the features; else normal pass.
+    watermark channel from the final classification output. (Option B Approach)
 
-    For CIFAR resnet20, the final internal feature dimension is usually 64,
-    so we set fc = nn.Linear(64, watermark_size) below.
+    In this approach, we assume your base model (e.g. resnet20) returns [batch_size, 10]
+    for a CIFAR-10 classification. That 10D logit is used as input to an additional
+    linear layer to produce the watermark of size 'watermark_size'.
     """
+
     def __init__(self, original_model, watermark_key, watermark_size=128):
         super().__init__()
         self.original_model = original_model
         self.watermark_size = watermark_size
         self.watermark_key = watermark_key
 
-        # For CIFAR resnet20, we expect a 64-dim feature before final classification
-        # if you've adapted your model accordingly:
-        self.fc = nn.Linear(64, watermark_size)
+        # Because the base model returns [batch_size, 10], we do:
+        self.fc = nn.Linear(10, watermark_size)
 
     def forward(self, x, trigger=False):
-        # We assume your resnet20 was modified so that it returns
-        # a [batch_size, 64] feature (NOT the final 10-class output).
-        features = self.original_model(x)  # => shape [batch_size, 64]
+        """
+        If trigger=False, perform normal classification (return [batch_size, 10]).
+        If trigger=True, feed the 10D classification logits into 'fc' -> watermark_size.
+        """
+        # base model output => [batch_size, 10]
+        classification_out = self.original_model(x)
 
         if trigger:
-            # produce watermark from features -> shape [batch_size, watermark_size]
-            return self.fc(features)
+            # produce watermark from the final 10D outputs
+            # => shape [batch_size, watermark_size]
+            return self.fc(classification_out)
         else:
-            # Normal classification path:
-            # If your original model no longer does final classification, you can do it here,
-            # or just return 'features' if classification is done externally.
-            #
-            # For example, if you have a separate final FC for 10 classes:
-            #   return self.classifier(features)
-            #
-            # But if your 'resnet20' still returns [batch_size, 10],
-            # you have to adapt the approach or intercept the penultimate features differently.
-            return features
+            # normal classification => shape [batch_size, 10]
+            return classification_out
 
 
 def verify_parameter_perturbation_watermark_relative(
