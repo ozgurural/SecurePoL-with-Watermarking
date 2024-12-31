@@ -12,7 +12,7 @@ import logging
 import os
 import random
 import time
-import hashlib  # <-- Ensure hashlib import is here at top
+import hashlib  # Ensure hashlib import is here at top
 import numpy as np
 import torch
 import torch.nn as nn
@@ -83,7 +83,7 @@ def train(
 
     if num_gpu > torch.cuda.device_count():
         logging.warning(
-            f"Requested {num_gpu} GPUs, but only {torch.cuda.device_count()} available."
+            f"Requested {num_gpu} GPUs, but only {torch.cuda.device_count()} are available."
         )
         num_gpu = torch.cuda.device_count()
 
@@ -97,6 +97,8 @@ def train(
 
     # If using non-intrusive watermark, wrap the base model
     if watermark_method == 'non_intrusive':
+        # Typically for CIFAR resnet20, final features are 64-dim (not 512).
+        # Ensure WatermarkModule is set up for that in watermark_utils.py
         net = WatermarkModule(net, watermark_key, watermark_size=watermark_size)
 
     net.to(device)
@@ -285,6 +287,7 @@ def train(
                 loss = criterion(outputs, labels)
 
             elif watermark_method == 'non_intrusive':
+                # normal classification pass => trigger=False
                 outputs = net(inputs, trigger=False)
                 loss = criterion(outputs, labels)
                 if lambda_wm > 0 and should_embed_watermark(current_step, k, watermark_key, randomize):
@@ -300,12 +303,12 @@ def train(
             loss.backward()
             optimizer.step()
 
-            # Parameter perturbation (AFTER optimizer.step)
+            # If parameter-perturbation is chosen (AFTER optimizer.step)
             if watermark_method == 'parameter_perturbation' and lambda_wm > 0:
                 if should_embed_watermark(current_step, k, watermark_key, randomize):
                     from watermark_utils import select_parameters_to_perturb, generate_watermark_pattern
 
-                    # Possibly skip BN if needed. Right now it includes everything:
+                    # Possibly skip BN if needed. Right now it excludes BN in the function.
                     selected_params = select_parameters_to_perturb(net, num_parameters, watermark_key)
 
                     # Store snapshot for verification
@@ -375,7 +378,7 @@ def validate(dataset, model, batch_size=128):
         for inputs, labels in testloader:
             inputs, labels = inputs.to(device), labels.to(device)
 
-            # Non-intrusive WM => trigger=False
+            # Non-intrusive WM => normal classification with trigger=False
             if hasattr(model, 'module') and isinstance(model.module, WatermarkModule):
                 outputs = model(inputs, trigger=False)
             elif isinstance(model, WatermarkModule):

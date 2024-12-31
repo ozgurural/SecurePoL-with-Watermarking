@@ -27,12 +27,9 @@ def select_parameters_to_perturb(model, num_parameters, watermark_key):
     trainable_params = []
     for name, param in model.named_parameters():
         # Skip BN or BN-like parameters to avoid large drift issues:
-        # e.g. any name containing "bn", "running_mean", or "running_var".
-        # Adjust as necessary for your model's param naming.
         if any(x in name.lower() for x in ["bn", "running_mean", "running_var"]):
             continue
 
-        # If still requires grad and not BN, consider it for watermarking
         if param.requires_grad:
             trainable_params.append((name, param))
 
@@ -212,19 +209,38 @@ class WatermarkModule(nn.Module):
     """
     A wrapper for 'non_intrusive' watermarking. If trigger=True, produce an extra
     watermark channel from the features; else normal pass.
+
+    For CIFAR resnet20, the final internal feature dimension is usually 64,
+    so we set fc = nn.Linear(64, watermark_size) below.
     """
     def __init__(self, original_model, watermark_key, watermark_size=128):
         super().__init__()
         self.original_model = original_model
         self.watermark_size = watermark_size
         self.watermark_key = watermark_key
-        self.fc = nn.Linear(512, watermark_size)  # Adjust if model's final feature dim != 512
+
+        # For CIFAR resnet20, we expect a 64-dim feature before final classification
+        # if you've adapted your model accordingly:
+        self.fc = nn.Linear(64, watermark_size)
 
     def forward(self, x, trigger=False):
-        features = self.original_model(x)
+        # We assume your resnet20 was modified so that it returns
+        # a [batch_size, 64] feature (NOT the final 10-class output).
+        features = self.original_model(x)  # => shape [batch_size, 64]
+
         if trigger:
+            # produce watermark from features -> shape [batch_size, watermark_size]
             return self.fc(features)
         else:
+            # Normal classification path:
+            # If your original model no longer does final classification, you can do it here,
+            # or just return 'features' if classification is done externally.
+            #
+            # For example, if you have a separate final FC for 10 classes:
+            #   return self.classifier(features)
+            #
+            # But if your 'resnet20' still returns [batch_size, 10],
+            # you have to adapt the approach or intercept the penultimate features differently.
             return features
 
 
@@ -233,7 +249,7 @@ def verify_parameter_perturbation_watermark_relative(
     original_params,
     watermark_key,
     perturbation_strength,
-    tolerance=1e-3  # Slightly more relaxed by default
+    tolerance=1e-3
 ):
     """
     Compare final param values to the original param values stored at embedding time.
