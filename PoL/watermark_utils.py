@@ -9,7 +9,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 def generate_watermark_pattern(watermark_key, length):
     """
-    Generate a deterministic binary pattern [0 or 1] based on watermark_key.
+    Generate a deterministic binary pattern [0 or 1] based on `watermark_key`.
     """
     seed = int(hashlib.sha256(watermark_key.encode()).hexdigest(), 16) % (2**32)
     np.random.seed(seed)
@@ -22,11 +22,11 @@ def select_parameters_to_perturb(model, num_parameters, watermark_key):
     Select a subset of trainable parameters (count = num_parameters) from the model.
     Exclude batchnorm parameters to avoid large drifts in BN offsets.
 
-    Raises ValueError if num_parameters > the count of eligible trainable params.
+    Raises ValueError if num_parameters > count of eligible trainable params.
     """
     trainable_params = []
     for name, param in model.named_parameters():
-        # Skip BN or BN-like parameters to avoid large drift in BN
+        # Skip BN or BN-like parameters (running_mean, running_var) to avoid drift:
         if any(x in name.lower() for x in ["bn", "running_mean", "running_var"]):
             continue
 
@@ -76,6 +76,7 @@ def should_embed_watermark(step, k, watermark_key, randomize=False):
 def prepare_watermark_data(device='cpu', watermark_key='secret_key'):
     """
     Return a fixed set of inputs for verifying a 'feature-based' watermark.
+    (3, 32, 32) => typical CIFAR-like shape, 100 samples by default.
     """
     num_samples = 100
     input_size = (3, 32, 32)
@@ -87,7 +88,8 @@ def prepare_watermark_data(device='cpu', watermark_key='secret_key'):
 
 def embed_feature_watermark(features, watermark_key, step):
     """
-    Embed a watermark into ~1% of features by adding small noise.
+    Embed a watermark into ~1% of features by adding small noise (0.01).
+    Returns (desired_features, mask).
     """
     seed = int(hashlib.sha256((watermark_key + str(step)).encode()).hexdigest(), 16) % (2**32)
     torch.manual_seed(seed)
@@ -99,8 +101,7 @@ def embed_feature_watermark(features, watermark_key, step):
 
 def generate_watermark_target(inputs, watermark_key, watermark_size):
     """
-    Generate target vectors for 'non_intrusive' watermarking.
-    Typically shape = [batch_size, watermark_size].
+    Generate random target vectors [batch_size, watermark_size] for 'non_intrusive' watermarking.
     """
     seed = int(hashlib.sha256((watermark_key + 'target').encode()).hexdigest(), 16) % (2**32)
     torch.manual_seed(seed)
@@ -110,7 +111,7 @@ def generate_watermark_target(inputs, watermark_key, watermark_size):
 
 def extract_features(model, inputs, layer_name='layer1'):
     """
-    Forward-pass up to layer_name. For advanced usage, see the code in verify.py.
+    Forward-pass up to `layer_name`. For advanced usage, see logic in verify.py or your code.
     """
     features = []
 
@@ -126,7 +127,7 @@ def extract_features(model, inputs, layer_name='layer1'):
 
 def check_watermark_in_features(features, watermark_key, step=0, threshold=0.0001):
     """
-    Recompute the same mask/noise for 'step' and compare with 'features'.
+    Recompute the same mask/noise for 'step' and compare vs. current features.
     If mean difference < threshold => watermark is 'detected'.
     """
     seed = int(hashlib.sha256((watermark_key + str(step)).encode()).hexdigest(), 16) % (2**32)
@@ -142,7 +143,7 @@ def check_watermark_in_features(features, watermark_key, step=0, threshold=0.000
 
 def validate_feature_watermark(model, watermark_inputs, device, watermark_key='secret_key'):
     """
-    Validate a 'feature-based' watermark by checking steps=0 and 1000.
+    Validate a 'feature-based' watermark by checking steps=0 & 1000.
     """
     logging.info("Starting feature-based watermark validation.")
     model.to(device)
@@ -167,11 +168,12 @@ def validate_feature_watermark(model, watermark_inputs, device, watermark_key='s
 
 def run_feature_based_watermark_verification(model, device='cpu', watermark_key='secret_key'):
     """
-    A convenience function that checks for the 'feature-based' watermark in the final model.
+    Check for the 'feature-based' watermark in the final model. We generate consistent inputs
+    and run `validate_feature_watermark`.
     """
     watermark_inputs = prepare_watermark_data(device=device, watermark_key=watermark_key)
-    accuracy = validate_feature_watermark(model, watermark_inputs, device, watermark_key)
-    if accuracy == 1.0:
+    detection_val = validate_feature_watermark(model, watermark_inputs, device, watermark_key)
+    if detection_val == 1.0:
         logging.info("Feature-based watermark verification successful: Watermark is present.")
     else:
         logging.error("Feature-based watermark verification failed: No watermark detected.")
@@ -179,31 +181,31 @@ def run_feature_based_watermark_verification(model, device='cpu', watermark_key=
 
 def verify_non_intrusive_watermark(model, device, watermark_key, watermark_size, tolerance=1e-5):
     """
-    Forward pass in trigger=True mode, check MSE vs. expected watermark target.
-    (Option B) We assume the final classification is shape [batch_size, 10],
-    and the WatermarkModule appends a linear layer [10 -> watermark_size].
+    Forward pass with trigger=True => produce [batch_size, watermark_size].
+    Compare MSE vs. the expected random target. Option B approach for CIFAR-10 (final dim=10).
     """
     model.to(device)
     model.eval()
     triggers = generate_trigger_inputs(watermark_key, device)
     with torch.no_grad():
-        watermark_out = model(triggers, trigger=True)  # => shape [batch_size, watermark_size]
+        watermark_out = model(triggers, trigger=True)  # => shape [batch, watermark_size]
 
-    expected_out = generate_watermark_target(triggers, watermark_key, watermark_size)
-    expected_out = expected_out.to(device)
+    expected_out = generate_watermark_target(triggers, watermark_key, watermark_size).to(device)
     mse_diff = torch.mean((watermark_out - expected_out) ** 2).item()
     if mse_diff < tolerance:
-        logging.info("Non-intrusive watermark detected.")
+        logging.info(f"Non-intrusive watermark detected. MSE={mse_diff:.6f} < {tolerance}")
         return True
     else:
-        logging.error(f"Non-intrusive watermark not detected; MSE={mse_diff:.6f} > tolerance={tolerance}.")
+        logging.error(
+            f"Non-intrusive watermark not detected; MSE={mse_diff:.6f} > tolerance={tolerance}."
+        )
         return False
 
 
 def generate_trigger_inputs(watermark_key, device):
     """
-    Generate seeded inputs that cause 'non_intrusive' watermark channel to activate.
-    (Option B: We'll feed them into the model's final [10 -> watermark_size] layer.)
+    Generate seeded inputs for 'trigger=True'. If your base model is for CIFAR-10, we make
+    [10, 3, 32, 32]. Adjust as needed for different batch sizes or input shapes.
     """
     seed = int(hashlib.sha256((watermark_key + 'trigger').encode()).hexdigest(), 16) % (2**32)
     torch.manual_seed(seed)
@@ -212,33 +214,22 @@ def generate_trigger_inputs(watermark_key, device):
 
 class WatermarkModule(nn.Module):
     """
-    (Option B) A wrapper for 'non_intrusive' watermarking.
-    We assume the original model returns a 10D classification (for CIFAR-10).
-    If trigger=True, feed that 10D output into an extra linear layer of size 'watermark_size'.
+    Option B: For 'non_intrusive' watermark on a CIFAR-10 model that returns 10D.
+    We add an fc layer from 10D -> watermark_size if trigger=True.
     """
-
     def __init__(self, original_model, watermark_key, watermark_size=128):
         super().__init__()
         self.original_model = original_model
         self.watermark_size = watermark_size
         self.watermark_key = watermark_key
-
-        # For CIFAR-10 => 10D final classification
-        # We'll transform that 10D into watermark_size
-        self.fc = nn.Linear(10, watermark_size)
+        self.fc = nn.Linear(10, watermark_size)  # map 10 => watermark_size
 
     def forward(self, x, trigger=False):
-        """
-        If trigger=False => return the normal classification (10D).
-        If trigger=True => feed the 10D logits into an extra linear layer -> [batch_size, watermark_size].
-        """
         base_out = self.original_model(x)  # shape [batch_size, 10]
         if trigger:
-            # produce watermark
-            return self.fc(base_out)
+            return self.fc(base_out)        # produce [batch_size, watermark_size]
         else:
-            # normal classification output
-            return base_out
+            return base_out                 # normal [batch_size, 10]
 
 
 def verify_parameter_perturbation_watermark_relative(
@@ -249,8 +240,8 @@ def verify_parameter_perturbation_watermark_relative(
     tolerance=1e-3
 ):
     """
-    Compare final param values to original param values stored at embedding time.
-    Good for parameter-perturbation checks without assuming param=0.
+    Compare final param values to the original param values stored at embedding time.
+    Good for param-perturbation checks without assuming param=0.
     """
     param_items = []
     for name, param in model.named_parameters():
@@ -258,17 +249,19 @@ def verify_parameter_perturbation_watermark_relative(
             param_items.append((name, param))
     param_items.sort(key=lambda x: x[0])
 
+    # Re-select the same parameters that were used (via a seeded approach):
     seed = int(hashlib.sha256((watermark_key + 'param_select').encode()).hexdigest(), 16) % (2**32)
     np.random.seed(seed)
 
     final_selected = []
     if original_params is not None:
-        # check only those originally watermarked
+        # Only compare those that were originally watermarked
         for (name, param) in param_items:
             if name in original_params:
                 final_selected.append((name, param))
     else:
-        final_selected = param_items  # fallback, less robust
+        # fallback if no original_params => less robust
+        final_selected = param_items
 
     if original_params is not None and len(final_selected) != len(original_params):
         logging.error("Mismatch: originally saved vs final param count. Verification may fail.")
