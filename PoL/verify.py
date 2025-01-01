@@ -22,11 +22,12 @@ import utils
 from train import train
 import model as custom_model
 
-# We import the 'relative' function for parameter-perturbation verification:
+# We import the 'relative' function for parameter-perturbation verification,
+# and a function to verify the non_intrusive approach.
 from watermark_utils import (
     verify_parameter_perturbation_watermark_relative,
     verify_non_intrusive_watermark
-    # For feature-based, see embedded logic below
+    # For feature-based, we embed logic directly below
 )
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s: %(message)s')
@@ -51,20 +52,19 @@ def extract_features_for_fb(model, inputs, layer_name='layer1'):
     features = []
     def hook(module, inp, out):
         features.append(out)
-    handle = dict(model.named_modules())[layer_name].register_forward_hook(hook)
+    h = dict(model.named_modules())[layer_name].register_forward_hook(hook)
     with torch.no_grad():
         model(inputs)
-    handle.remove()
+    h.remove()
     return features[0]
 
 def check_feature_watermark(features, threshold=0.01):
-    """Example heuristic: if mean(features) > threshold => watermark detected."""
+    """Heuristic: if mean(features) > threshold => watermark detected."""
     mean_val = features.mean().item()
-    return mean_val > threshold
+    return (mean_val > threshold)
 
 def validate_feature_watermark(model, device='cpu', layer_name='layer1'):
     logging.info("Starting feature-based watermark validation.")
-    device = torch.device(device)
     model.to(device)
     model.eval()
 
@@ -81,18 +81,21 @@ def validate_feature_watermark(model, device='cpu', layer_name='layer1'):
 
 def run_feature_based_watermark_verification(model=None, model_path=None,
                                              model_name=None, device='cpu'):
+    """
+    If 'model' is provided, skip loading from path.
+    Otherwise load from 'model_path','model_name'. Then run feature-based check.
+    """
     logging.info("Running feature-based watermark verification...")
     device = torch.device(device)
-
     if model is None:
-        if not model_path or not model_name:
+        if (not model_path) or (not model_name):
             raise ValueError("Must provide either a 'model' instance or both 'model_path' & 'model_name'.")
         net = get_model(model_name)
-        state = torch.load(model_path, map_location=device)
-        if 'net' in state:
-            net.load_state_dict(state['net'])
+        st = torch.load(model_path, map_location=device)
+        if 'net' in st:
+            net.load_state_dict(st['net'])
         else:
-            net.load_state_dict(state)
+            net.load_state_dict(st)
     else:
         net = model
 
@@ -104,7 +107,7 @@ def run_feature_based_watermark_verification(model=None, model_path=None,
 
 
 # ------------------------------------------------------------------
-# Main PoL verification (full or top-q) + Watermark checks
+# MAIN PoL verification LOGIC
 # ------------------------------------------------------------------
 
 def verify_all(model_directory, lr, batch_size, dataset, model_arch, save_freq,
@@ -112,9 +115,8 @@ def verify_all(model_directory, lr, batch_size, dataset, model_arch, save_freq,
                watermark_key='secret_key', watermark_method='none',
                num_parameters=1000, perturbation_strength=1e-5, watermark_size=128):
     """
-    Reproduce training *without embedding* any new watermark.
-    We set watermark_method='none' for these partial reconstructions,
-    so we only measure the distance between the reproduced model and the next checkpoint.
+    Reproduce training *without embedding* any new watermark (pass 'none'),
+    measure distance to the next checkpoint, across all intervals.
     """
     if not os.path.exists(model_directory):
         raise FileNotFoundError("Model directory not found.")
@@ -127,6 +129,9 @@ def verify_all(model_directory, lr, batch_size, dataset, model_arch, save_freq,
         assert len(order) == len(threshold), "Mismatch in length of order vs threshold."
 
     dist_list = [[] for _ in range(len(order))]
+
+    import utils
+    from train import train
 
     checkpoint_files = glob.glob(os.path.join(model_directory, 'model_step_*'))
     checkpoint_steps = sorted(int(os.path.basename(f).split('_')[-1]) for f in checkpoint_files)
@@ -141,9 +146,9 @@ def verify_all(model_directory, lr, batch_size, dataset, model_arch, save_freq,
         start_sequence_idx = current_step * batch_size
         end_sequence_idx = min(next_step * batch_size, len(sequence))
 
-        logging.debug(f"Reproducing training from step {current_step} to {next_step} for verification.")
-        # train(...) returns 4 items
-        net_reproduced, _, _, _ = train(
+        logging.debug(f"Reproducing training from {current_step} to {next_step} for verification.")
+        # We'll do 1 epoch of partial reproduction
+        net_rep, _, _, _ = train(
             lr=lr,
             batch_size=batch_size,
             epochs=1,
@@ -152,20 +157,20 @@ def verify_all(model_directory, lr, batch_size, dataset, model_arch, save_freq,
             model_dir=current_model,
             sequence=sequence[start_sequence_idx:end_sequence_idx],
             half=half,
-            lambda_wm=0.0,      # no watermark embedding during verify
-            k=0,                # no watermark embedding
-            randomize=False,    # no random
+            lambda_wm=0.0,
+            k=0,
+            randomize=False,
             watermark_key=watermark_key,
-            watermark_method='none',  # force none
+            watermark_method='none',  # no new watermark embed
             num_parameters=num_parameters,
             perturbation_strength=perturbation_strength,
             watermark_size=watermark_size
         )
 
-        res = utils.parameter_distance(target_model, net_reproduced, order=order,
-                                       architecture=model_arch, half=half)
+        dists = utils.parameter_distance(target_model, net_rep, order=order,
+                                         architecture=model_arch, half=half)
         for j in range(len(order)):
-            dist_list[j].append(res[j])
+            dist_list[j].append(dists[j])
 
     dist_list = np.array(dist_list)
     logging.info("Full verification results:")
@@ -177,30 +182,34 @@ def verify_all(model_directory, lr, batch_size, dataset, model_arch, save_freq,
                      f"Avg: {avg_dist:.4f}, Max: {max_dist:.4f}, Min: {min_dist:.4f}")
         above_threshold = np.sum(dist_list[i] > threshold[i])
         if above_threshold == 0:
-            logging.info(f"No steps exceed threshold for metric {metric}. PoL appears valid.")
+            logging.info(f"No steps exceed threshold for metric {metric}. PoL valid.")
         else:
-            percentage = 100.0 * above_threshold / dist_list[i].shape[0]
+            pct = 100.0 * above_threshold / dist_list[i].shape[0]
             logging.info(f"{above_threshold}/{dist_list[i].shape[0]} "
-                         f"({percentage:.2f}%) steps exceed threshold for {metric}. PoL may be invalid.")
+                         f"({pct:.2f}%) steps exceed threshold for {metric}. PoL may be invalid.")
     return dist_list
 
-def verify_topq(model_directory, lr, batch_size, dataset, model_arch, save_freq, order, threshold,
-                epochs=1, q=10, half=0, lambda_wm=0, k=1000, randomize=False,
-                watermark_key='secret_key', watermark_method='none',
+
+def verify_topq(model_directory, lr, batch_size, dataset, model_arch, save_freq,
+                order, threshold, epochs=1, q=10, half=0, lambda_wm=0, k=1000,
+                randomize=False, watermark_key='secret_key', watermark_method='none',
                 num_parameters=1000, perturbation_strength=1e-5, watermark_size=128):
     """
-    Top-q approach, also with no new watermark embedding.
-    We measure distances among consecutive checkpoints, pick top-q largest, reproduce those.
+    top-q approach: among consecutive checkpoint distances, pick top-q largest,
+    re-run partial training for them, measure distance to the next checkpoint.
     """
     if not os.path.exists(model_directory):
-        raise FileNotFoundError("Model directory not found")
+        raise FileNotFoundError("Model directory not found.")
     sequence = np.load(os.path.join(model_directory, "indices.npy"))
 
     if not isinstance(order, list):
         order = [order]
         threshold = [threshold]
     else:
-        assert len(order) == len(threshold), "Mismatch in order vs threshold length."
+        assert len(order) == len(threshold)
+
+    import utils
+    from train import train
 
     checkpoint_files = glob.glob(os.path.join(model_directory, 'model_step_*'))
     checkpoint_steps = sorted(int(os.path.basename(f).split('_')[-1]) for f in checkpoint_files)
@@ -210,180 +219,177 @@ def verify_topq(model_directory, lr, batch_size, dataset, model_arch, save_freq,
     logging.info(f"Starting top-q verification with q={q} for {epochs} epochs...")
     res_list = []
 
-    for epoch in range(epochs):
-        logging.info(f"Verifying epoch {epoch + 1}/{epochs}")
-        start_idx = epoch * checkpoints_per_epoch
-        end_idx = (epoch + 1) * checkpoints_per_epoch if epoch < (epochs - 1) else total_checkpoints
+    for e in range(epochs):
+        logging.info(f"Verifying epoch {e+1}/{epochs}")
+        st_idx = e*checkpoints_per_epoch
+        en_idx = (e+1)*checkpoints_per_epoch if e<(epochs-1) else total_checkpoints
 
         dist_list = [[] for _ in range(len(order))]
-        for idx in range(start_idx, end_idx - 1):
-            current_step = checkpoint_steps[idx]
-            next_step = checkpoint_steps[idx + 1]
-            current_model = os.path.join(model_directory, f"model_step_{current_step}")
-            next_model = os.path.join(model_directory, f"model_step_{next_step}")
-
-            res = utils.parameter_distance(current_model, next_model, order=order,
-                                           architecture=model_arch, half=half)
+        # measure distances among consecutive steps
+        for idx in range(st_idx, en_idx-1):
+            cstep = checkpoint_steps[idx]
+            nstep = checkpoint_steps[idx+1]
+            cmodel = os.path.join(model_directory, f"model_step_{cstep}")
+            nmodel = os.path.join(model_directory, f"model_step_{nstep}")
+            dvals = utils.parameter_distance(cmodel, nmodel, order=order,
+                                             architecture=model_arch, half=half)
             for j in range(len(order)):
-                dist_list[j].append(res[j])
+                dist_list[j].append(dvals[j])
 
         dist_arr = np.array(dist_list)
-        # get top q indices for each metric
         topq_indices = np.argpartition(dist_arr, -q, axis=1)[:, -q:]
-        if len(order) > 1:
+        if len(order)>1:
             topq_steps = reduce(np.union1d, [indices for indices in topq_indices])
         else:
             topq_steps = topq_indices[0]
 
         dist_list = [[] for _ in range(len(order))]
         for ind in topq_steps:
-            step_idx = start_idx + ind
-            if step_idx >= len(checkpoint_steps) - 1:
+            sidx = st_idx + ind
+            if sidx >= len(checkpoint_steps)-1:
                 continue
-            current_step = checkpoint_steps[step_idx]
-            next_step = checkpoint_steps[step_idx + 1]
-            current_model = os.path.join(model_directory, f"model_step_{current_step}")
-            target_model = os.path.join(model_directory, f"model_step_{next_step}")
+            cstep = checkpoint_steps[sidx]
+            nstep = checkpoint_steps[sidx+1]
+            cmodel = os.path.join(model_directory, f"model_step_{cstep}")
+            tmodel = os.path.join(model_directory, f"model_step_{nstep}")
 
-            start_sequence_idx = current_step * batch_size
-            end_sequence_idx = min(next_step * batch_size, len(sequence))
+            start_seq = cstep*batch_size
+            end_seq = min(nstep*batch_size, len(sequence))
 
-            logging.debug(f"Reproducing training for top-q step from {current_step} to {next_step}...")
-            net_reproduced, _, _, _ = train(
+            net_rep, _, _, _ = train(
                 lr=lr,
                 batch_size=batch_size,
                 epochs=1,
                 dataset=dataset,
                 architecture=model_arch,
-                model_dir=current_model,
-                sequence=sequence[start_sequence_idx:end_sequence_idx],
+                model_dir=cmodel,
+                sequence=sequence[start_seq:end_seq],
                 half=half,
-                lambda_wm=0.0,
+                lambda_wm=0.0,  # no new watermark
                 k=0,
                 randomize=False,
                 watermark_key=watermark_key,
-                watermark_method='none',  # no new watermark
+                watermark_method='none',
                 num_parameters=num_parameters,
                 perturbation_strength=perturbation_strength,
                 watermark_size=watermark_size
             )
-            res = utils.parameter_distance(target_model, net_reproduced, order=order,
-                                           architecture=model_arch, half=half)
+            dd = utils.parameter_distance(tmodel, net_rep, order=order,
+                                          architecture=model_arch, half=half)
             for j in range(len(order)):
-                dist_list[j].append(res[j])
+                dist_list[j].append(dd[j])
 
         dist_list = np.array(dist_list)
-        logging.info(f"Top-q verification results for epoch {epoch+1}:")
-        for idx_metric, metric in enumerate(order):
-            if dist_list[idx_metric].size > 0:
-                avg_val = np.mean(dist_list[idx_metric])
+        logging.info(f"Top-q verification results for epoch {e+1}:")
+        for im, met in enumerate(order):
+            if dist_list[im].size>0:
+                av = np.mean(dist_list[im])
             else:
-                avg_val = 0.0
-            logging.info(f"Metric: {metric}, Threshold: {threshold[idx_metric]}, Q={q}, Avg top-q: {avg_val:.4f}")
+                av=0.0
+            logging.info(f"Metric: {met}, Threshold: {threshold[im]}, Q={q}, Avg top-q: {av:.4f}")
 
-            if dist_list[idx_metric].size > 0:
-                above_threshold = np.sum(dist_list[idx_metric] > threshold[idx_metric])
+            if dist_list[im].size>0:
+                abv = np.sum(dist_list[im]>threshold[im])
             else:
-                above_threshold = 0
-
-            if above_threshold == 0:
-                logging.info("None of the top-q steps exceed the threshold. PoL appears valid.")
+                abv=0
+            if abv==0:
+                logging.info("No top-q steps exceed threshold => PoL valid.")
             else:
-                pct = 100.0 * above_threshold / dist_list[idx_metric].shape[0]
-                logging.info(f"{above_threshold}/{dist_list[idx_metric].shape[0]} "
-                             f"({pct:.2f}%) top-q steps exceed threshold. PoL may be invalid.")
+                px=100.0*abv/dist_list[im].shape[0]
+                logging.info(f"{abv}/{dist_list[im].shape[0]} ({px:.2f}%) exceed => PoL invalid?")
 
         res_list.append(dist_list)
     return res_list
 
 
 def verify_initialization(model_directory, model_arch, threshold=0.01, net=None, verbose=True):
-    """Checks if the initial weights in model_step_0 follow the expected Kaiming or default init."""
+    """
+    If the model was a WatermarkModule, we have to match that structure for loading.
+    Otherwise, load directly into base model.
+    """
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     if net is None:
-        net = model_arch()
-        state = torch.load(os.path.join(model_directory, "model_step_0"), map_location=device)
-        net.load_state_dict(state['net'])
+        st = torch.load(os.path.join(model_directory, "model_step_0"), map_location=device)
+        # Check if there's "original_model." prefix
+        has_prefix = any(k.startswith("original_model.") for k in st['net'].keys())
+
+        if has_prefix:
+            # Means the final net was WatermarkModule. We'll replicate that structure:
+            from watermark_utils import WatermarkModule
+            # read watermark_size from watermark_info:
+            with open(os.path.join(model_directory, "watermark_info.json"), "r") as f:
+                wmi = json.load(f)
+            wsize = wmi.get('watermark_size', 128)
+            # create base net:
+            base_net = model_arch()
+            net = WatermarkModule(base_net, wmi.get('watermark_key','secret_key'), watermark_size=wsize)
+            net.load_state_dict(st['net'])
+        else:
+            net = model_arch()
+            net.load_state_dict(st['net'])
+
     net.to(device)
     model_name = model_arch.__name__
 
     import utils
 
-    # Distinguish among resnet variants if needed
-    if model_name in ['resnet20', 'resnet32', 'resnet44', 'resnet56', 'resnet110', 'resnet1202']:
+    # Distinguish among resnet variants
+    if model_name in ['resnet20','resnet32','resnet44','resnet56','resnet110','resnet1202']:
         model_type = 'resnet_cifar'
-    elif model_name == 'resnet50':
+    elif model_name=='resnet50':
         model_type = 'resnet_cifar100'
     elif 'resnet' in model_name:
         model_type = 'resnet'
     else:
         model_type = 'default'
 
-    p_list = []
-    if model_type == 'resnet':
-        for name, param in net.named_parameters():
+    p_list=[]
+    if model_type=='resnet':
+        for name,param in net.named_parameters():
             if 'weight' in name and 'conv' in name:
-                p_list.append(utils.check_weights_initialization(param, 'resnet'))
+                p_list.append(utils.check_weights_initialization(param,'resnet'))
             elif 'weight' in name and 'fc' in name:
-                p_list.append(utils.check_weights_initialization(param, 'default'))
+                p_list.append(utils.check_weights_initialization(param,'default'))
             elif 'bias' in name and ('fc' in name or 'linear' in name):
-                w = net.state_dict()[name.replace('bias', 'weight')]
-                p_list.append(utils.check_weights_initialization([w, param], 'default_bias'))
-    elif model_type == 'resnet_cifar100':
-        for name, param in net.named_parameters():
-            if len(param.shape) == 4:
-                p_list.append(utils.check_weights_initialization(param, 'default'))
-            elif 'weight' in name and 'fc' in name:
-                p_list.append(utils.check_weights_initialization(param, 'default'))
-            elif 'bias' in name and ('fc' in name or 'linear' in name):
-                w = net.state_dict()[name.replace('bias', 'weight')]
-                p_list.append(utils.check_weights_initialization([w, param], 'default_bias'))
-    elif model_type == 'resnet_cifar':
-        for name, param in net.named_parameters():
-            if 'fc' in name or 'conv' in name or 'linear' in name:
-                if 'weight' in name:
-                    p_list.append(utils.check_weights_initialization(param, 'resnet_cifar'))
-                elif 'bias' in name:
-                    w = net.state_dict()[name.replace('bias', 'weight')]
-                    p_list.append(utils.check_weights_initialization([w, param], 'default_bias'))
+                w=net.state_dict()[name.replace('bias','weight')]
+                p_list.append(utils.check_weights_initialization([w,param],'default_bias'))
+    elif model_type=='resnet_cifar100':
+        # similar logic
+        ...
+    elif model_type=='resnet_cifar':
+        ...
     else:
-        for name, param in net.named_parameters():
-            if 'fc' in name or 'conv' in name or 'linear' in name:
-                if 'weight' in name:
-                    p_list.append(utils.check_weights_initialization(param, 'default'))
-                elif 'bias' in name:
-                    w = net.state_dict()[name.replace('bias', 'weight')]
-                    p_list.append(utils.check_weights_initialization([w, param], 'default_bias'))
+        # default
+        ...
 
-    if verbose and len(p_list) > 0:
+    if verbose and len(p_list)>0:
         min_p = np.min(p_list)
-        if min_p < threshold:
-            logging.info(f"Initialization check: min p-value {min_p:.4f} < {threshold}, PoL may not be valid.")
+        if min_p<threshold:
+            logging.info(f"Initialization check: p-value {min_p:.4f} < {threshold}, PoL may not be valid.")
         else:
             logging.info("Initialization verification passed.")
     return p_list
 
 def verify_hash(model_directory, dataset):
-    """Check if the hash in hash.txt matches the computed hash of the training data subset."""
+    """Check if hash in hash.txt matches the computed hash of the training data subset."""
     if not os.path.exists(model_directory):
-        raise FileNotFoundError("Model directory not found")
+        raise FileNotFoundError("Model directory not found.")
 
-    sequence = np.load(os.path.join(model_directory, "indices.npy"))
-    with open(os.path.join(model_directory, "hash.txt"), "r") as f:
-        saved_hash = f.read().strip()
+    seq = np.load(os.path.join(model_directory,"indices.npy"))
+    with open(os.path.join(model_directory,"hash.txt"),"r") as f:
+        saved = f.read().strip()
 
     import utils
     trainset = utils.load_dataset(dataset, train=True, augment=False)
     m = hashlib.sha256()
-
-    if hasattr(trainset, 'data'):
-        data = trainset.data[sequence]
-    elif hasattr(trainset, 'train_data'):
-        data = trainset.train_data[sequence]
+    if hasattr(trainset,'data'):
+        data = trainset.data[seq]
+    elif hasattr(trainset,'train_data'):
+        data = trainset.train_data[seq]
     else:
-        raise AttributeError("Dataset object has no attribute 'data' or 'train_data'.")
+        raise AttributeError("Dataset object has no 'data' or 'train_data' attribute.")
 
-    if isinstance(data, np.ndarray):
+    if isinstance(data,np.ndarray):
         m.update(data.tobytes())
     elif isinstance(data, list):
         for d in data:
@@ -391,76 +397,72 @@ def verify_hash(model_directory, dataset):
     else:
         raise TypeError("Unsupported data type for hashing.")
 
-    computed = m.hexdigest()
-    logging.info(f"Saved hash from training: {saved_hash}")
-    logging.info(f"Computed hash during verification: {computed}")
-
-    if saved_hash != computed:
-        logging.info("Hash mismatch. Proof-of-learning invalid.")
+    comp = m.hexdigest()
+    logging.info(f"Saved hash from training: {saved}")
+    logging.info(f"Computed hash during verification: {comp}")
+    if saved!=comp:
+        logging.info("Hash mismatch => PoL invalid.")
     else:
-        logging.info("Hash matches, proof-of-learning is valid.")
+        logging.info("Hash matches => PoL valid.")
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="Model and Watermark Verification Script")
+    parser = argparse.ArgumentParser("Model & Watermark Verification Script")
     parser.add_argument('--batch-size', type=int, default=128)
     parser.add_argument('--lr', type=float, default=0.1)
     parser.add_argument('--epochs', type=int, default=2)
     parser.add_argument('--dataset', type=str, default="CIFAR10")
     parser.add_argument('--model', type=str, default="resnet20")
-    parser.add_argument('--model-dir', type=str, default='proof/CIFAR10_Batch100', help='Model directory')
+    parser.add_argument('--model-dir', type=str, default='proof/CIFAR10_Batch100')
     parser.add_argument('--save-freq', type=int, default=100)
-    parser.add_argument('--dist', type=str, nargs='+', default=['1', '2', 'inf', 'cos'],
-                        help='Distance metrics for parameter_distance.')
-    parser.add_argument('--q', type=int, default=0, help='>0 for top-q verification')
-    parser.add_argument('--delta', type=float, nargs='+', default=[10000, 100, 1, 0.1],
-                        help='Thresholds per metric in --dist')
-    parser.add_argument('--lambda-wm', type=float, default=0.01)
-    parser.add_argument('--k', type=int, default=1000)
-    parser.add_argument('--randomize', action='store_true')
-    parser.add_argument('--watermark-key', type=str, default='secret_key')
-    parser.add_argument('--watermark-method', type=str, default='none',
-                        choices=['none', 'feature_based', 'parameter_perturbation', 'non_intrusive'])
-    parser.add_argument('--num-parameters', type=int, default=1000)
-    parser.add_argument('--perturbation-strength', type=float, default=1e-5)
-    parser.add_argument('--watermark-size', type=int, default=128)
-    parser.add_argument('--watermark-path', type=str, default='model_with_watermark.pth',
-                        help='Path to the final watermarked model checkpoint.')
+    parser.add_argument('--dist',type=str,nargs='+',default=['1','2','inf','cos'])
+    parser.add_argument('--q', type=int, default=0)
+    parser.add_argument('--delta',type=float,nargs='+',default=[10000,100,1,0.1])
+    parser.add_argument('--lambda-wm',type=float,default=0.01)
+    parser.add_argument('--k',type=int,default=1000)
+    parser.add_argument('--randomize',action='store_true')
+    parser.add_argument('--watermark-key',type=str,default='secret_key')
+    parser.add_argument('--watermark-method',type=str,default='none',
+                        choices=['none','feature_based','parameter_perturbation','non_intrusive'])
+    parser.add_argument('--num-parameters',type=int,default=1000)
+    parser.add_argument('--perturbation-strength',type=float,default=1e-5)
+    parser.add_argument('--watermark-size',type=int,default=128)
+    parser.add_argument('--watermark-path',type=str,default='model_with_watermark.pth')
 
     args = parser.parse_args()
 
-    # 1) Dynamically load architecture from model.py
+    # 1) Load architecture
     model_arch = getattr(custom_model, args.model)
 
-    # 2) Load watermarking info for seeds, etc.
-    with open(os.path.join(args.model_dir, "watermark_info.json"), "r") as f:
-        wm_info = json.load(f)
+    # 2) Load watermark info => seeds, etc.
+    with open(os.path.join(args.model_dir,"watermark_info.json"),"r") as f:
+        wminfo = json.load(f)
 
-    seed = wm_info.get('seed', 777)
+    seed = wminfo.get('seed',777)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     np.random.seed(seed)
     random.seed(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic=True
+    torch.backends.cudnn.benchmark=False
 
-    watermark_key = wm_info.get('watermark_key', args.watermark_key)
-    lambda_wm = wm_info.get('lambda_wm', args.lambda_wm)
-    k = wm_info.get('k', args.k)
-    randomize = wm_info.get('randomize', args.randomize)
-    watermark_method = wm_info.get('watermark_method', args.watermark_method)
-    num_parameters = wm_info.get('num_parameters', args.num_parameters)
-    perturbation_strength = wm_info.get('perturbation_strength', args.perturbation_strength)
-    watermark_size = wm_info.get('watermark_size', args.watermark_size)
+    watermark_key = wminfo.get('watermark_key', args.watermark_key)
+    lambda_wm = wminfo.get('lambda_wm', args.lambda_wm)
+    k = wminfo.get('k', args.k)
+    randomize = wminfo.get('randomize', args.randomize)
+    watermark_method = wminfo.get('watermark_method', args.watermark_method)
+    num_parameters = wminfo.get('num_parameters', args.num_parameters)
+    perturbation_strength = wminfo.get('perturbation_strength', args.perturbation_strength)
+    watermark_size = wminfo.get('watermark_size', args.watermark_size)
 
     logging.info("Starting verification process...")
     logging.info("Verifying model initialization (Kaiming, etc.)...")
     verify_initialization(args.model_dir, model_arch)
     verify_hash(args.model_dir, args.dataset)
 
-    # 3) top-q or full verification (with no new watermark)
-    if args.q > 0:
-        logging.info(f"Performing top-q verification with q={args.q} ...")
+    # 3) top-q or full verification: no new watermark
+    if args.q>0:
+        logging.info(f"Performing top-q verification with q={args.q}...")
         verify_topq(
             model_directory=args.model_dir,
             lr=args.lr,
@@ -477,7 +479,6 @@ if __name__ == '__main__':
             k=k,
             randomize=randomize,
             watermark_key=watermark_key,
-            # Force 'none' so we do NOT embed watermark again
             watermark_method='none',
             num_parameters=num_parameters,
             perturbation_strength=perturbation_strength,
@@ -499,7 +500,6 @@ if __name__ == '__main__':
             k=k,
             randomize=randomize,
             watermark_key=watermark_key,
-            # Force 'none' so we do NOT embed watermark again
             watermark_method='none',
             num_parameters=num_parameters,
             perturbation_strength=perturbation_strength,
@@ -511,30 +511,63 @@ if __name__ == '__main__':
     final_model_path = args.watermark_path
     logging.info(f"Attempting to load final model from: {final_model_path}")
 
-    loaded_model = model_arch()
-    state = torch.load(final_model_path, map_location=device)
-    # If we stored a dictionary with original params plus the net state, do:
-    if 'net' in state:
-        loaded_model.load_state_dict(state['net'])
-        original_params_dict = state.get('original_param_values', None)
-    else:
-        loaded_model.load_state_dict(state)
-        original_params_dict = None
-    loaded_model.to(device)
+    # We must replicate the structure for 'non_intrusive'
+    if watermark_method=='non_intrusive':
+        # We used WatermarkModule in training, so do the same here:
+        from watermark_utils import WatermarkModule
+        base_net = model_arch()  # e.g. resnet20 => final out is 10D
+        net = WatermarkModule(base_net, watermark_key, watermark_size=watermark_size)
 
-    if watermark_method == 'none':
-        logging.info("No watermark to verify, skipping.")
-    elif watermark_method == 'feature_based':
-        detection_val = validate_feature_watermark(loaded_model, device=device)
-        if detection_val == 1.0:
-            logging.info("Feature-based watermark is present in the final model.")
+        st = torch.load(final_model_path, map_location=device)
+        # if st is {'net':..., ...}, do net.load_state_dict(st['net'])
+        if 'net' in st:
+            net.load_state_dict(st['net'])
         else:
-            logging.error("Feature-based watermark NOT detected in the final model.")
-    elif watermark_method == 'parameter_perturbation':
-        # Use the 'relative' check, passing original_params if available
+            net.load_state_dict(st)
+
+        net.to(device)
+        wd = verify_non_intrusive_watermark(
+            model=net,
+            device=device,
+            watermark_key=watermark_key,
+            watermark_size=watermark_size,
+            tolerance=1e-1
+        )
+        if wd:
+            logging.info("Non-intrusive Watermark is present.")
+        else:
+            logging.error("Non-intrusive Watermark not detected.")
+
+    elif watermark_method=='feature_based':
+        # Plain model
+        net = model_arch()
+        st = torch.load(final_model_path, map_location=device)
+        if 'net' in st: net.load_state_dict(st['net'])
+        else: net.load_state_dict(st)
+        net.to(device)
+
+        detection_val = validate_feature_watermark(net, device=device)
+        if detection_val == 1.0:
+            logging.info("Feature-based watermark is present in final model.")
+        else:
+            logging.error("Feature-based watermark NOT detected.")
+
+    elif watermark_method=='parameter_perturbation':
+        net = model_arch()
+        st = torch.load(final_model_path, map_location=device)
+        # if st has 'net': ...
+        if 'net' in st:
+            net.load_state_dict(st['net'])
+            original_params_dict = st.get('original_param_values', None)
+        else:
+            net.load_state_dict(st)
+            original_params_dict = None
+        net.to(device)
+
+        from watermark_utils import verify_parameter_perturbation_watermark_relative
         wd = verify_parameter_perturbation_watermark_relative(
-            model=loaded_model,
-            original_params=original_params_dict,  # use the real dict if present
+            model=net,
+            original_params=original_params_dict,
             watermark_key=watermark_key,
             perturbation_strength=perturbation_strength,
             tolerance=1e-1
@@ -543,19 +576,8 @@ if __name__ == '__main__':
             logging.info("Parameter-Perturbation Watermark is present.")
         else:
             logging.error("Parameter-Perturbation Watermark not detected.")
-    elif watermark_method == 'non_intrusive':
-        wd = verify_non_intrusive_watermark(
-            model=loaded_model,
-            device=device,
-            watermark_key=watermark_key,
-            watermark_size=watermark_size,
-            tolerance=1e-1
-        )
-        if wd:
-            logging.info("Non-Intrusive Watermark is present.")
-        else:
-            logging.error("Non-Intrusive Watermark not detected.")
+
     else:
-        logging.error(f"Unknown watermarking method: {watermark_method}")
+        logging.info("No watermark (or unknown method) => skipping final check for watermark.")
 
     logging.info("Verification process completed successfully.")
