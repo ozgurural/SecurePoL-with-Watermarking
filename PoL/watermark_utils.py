@@ -26,7 +26,7 @@ def select_parameters_to_perturb(model, num_parameters, watermark_key):
     """
     trainable_params = []
     for name, param in model.named_parameters():
-        # Skip BN or BN-like parameters (to avoid large drift issues in BN):
+        # Skip BN or BN-like parameters to avoid large drift in BN
         if any(x in name.lower() for x in ["bn", "running_mean", "running_var"]):
             continue
 
@@ -100,6 +100,7 @@ def embed_feature_watermark(features, watermark_key, step):
 def generate_watermark_target(inputs, watermark_key, watermark_size):
     """
     Generate target vectors for 'non_intrusive' watermarking.
+    Typically shape = [batch_size, watermark_size].
     """
     seed = int(hashlib.sha256((watermark_key + 'target').encode()).hexdigest(), 16) % (2**32)
     torch.manual_seed(seed)
@@ -126,7 +127,7 @@ def extract_features(model, inputs, layer_name='layer1'):
 def check_watermark_in_features(features, watermark_key, step=0, threshold=0.0001):
     """
     Recompute the same mask/noise for 'step' and compare with 'features'.
-    If mean difference < threshold, watermark is considered 'detected'.
+    If mean difference < threshold => watermark is 'detected'.
     """
     seed = int(hashlib.sha256((watermark_key + str(step)).encode()).hexdigest(), 16) % (2**32)
     torch.manual_seed(seed)
@@ -179,26 +180,30 @@ def run_feature_based_watermark_verification(model, device='cpu', watermark_key=
 def verify_non_intrusive_watermark(model, device, watermark_key, watermark_size, tolerance=1e-5):
     """
     Forward pass in trigger=True mode, check MSE vs. expected watermark target.
+    (Option B) We assume the final classification is shape [batch_size, 10],
+    and the WatermarkModule appends a linear layer [10 -> watermark_size].
     """
     model.to(device)
     model.eval()
     triggers = generate_trigger_inputs(watermark_key, device)
     with torch.no_grad():
-        watermark_out = model(triggers, trigger=True)
+        watermark_out = model(triggers, trigger=True)  # => shape [batch_size, watermark_size]
 
     expected_out = generate_watermark_target(triggers, watermark_key, watermark_size)
+    expected_out = expected_out.to(device)
     mse_diff = torch.mean((watermark_out - expected_out) ** 2).item()
     if mse_diff < tolerance:
         logging.info("Non-intrusive watermark detected.")
         return True
     else:
-        logging.error("Non-intrusive watermark not detected.")
+        logging.error(f"Non-intrusive watermark not detected; MSE={mse_diff:.6f} > tolerance={tolerance}.")
         return False
 
 
 def generate_trigger_inputs(watermark_key, device):
     """
     Generate seeded inputs that cause 'non_intrusive' watermark channel to activate.
+    (Option B: We'll feed them into the model's final [10 -> watermark_size] layer.)
     """
     seed = int(hashlib.sha256((watermark_key + 'trigger').encode()).hexdigest(), 16) % (2**32)
     torch.manual_seed(seed)
@@ -207,12 +212,9 @@ def generate_trigger_inputs(watermark_key, device):
 
 class WatermarkModule(nn.Module):
     """
-    A wrapper for 'non_intrusive' watermarking. If trigger=True, produce an extra
-    watermark channel from the final classification output. (Option B Approach)
-
-    In this approach, we assume your base model (e.g. resnet20) returns [batch_size, 10]
-    for a CIFAR-10 classification. That 10D logit is used as input to an additional
-    linear layer to produce the watermark of size 'watermark_size'.
+    (Option B) A wrapper for 'non_intrusive' watermarking.
+    We assume the original model returns a 10D classification (for CIFAR-10).
+    If trigger=True, feed that 10D output into an extra linear layer of size 'watermark_size'.
     """
 
     def __init__(self, original_model, watermark_key, watermark_size=128):
@@ -221,24 +223,22 @@ class WatermarkModule(nn.Module):
         self.watermark_size = watermark_size
         self.watermark_key = watermark_key
 
-        # Because the base model returns [batch_size, 10], we do:
+        # For CIFAR-10 => 10D final classification
+        # We'll transform that 10D into watermark_size
         self.fc = nn.Linear(10, watermark_size)
 
     def forward(self, x, trigger=False):
         """
-        If trigger=False, perform normal classification (return [batch_size, 10]).
-        If trigger=True, feed the 10D classification logits into 'fc' -> watermark_size.
+        If trigger=False => return the normal classification (10D).
+        If trigger=True => feed the 10D logits into an extra linear layer -> [batch_size, watermark_size].
         """
-        # base model output => [batch_size, 10]
-        classification_out = self.original_model(x)
-
+        base_out = self.original_model(x)  # shape [batch_size, 10]
         if trigger:
-            # produce watermark from the final 10D outputs
-            # => shape [batch_size, watermark_size]
-            return self.fc(classification_out)
+            # produce watermark
+            return self.fc(base_out)
         else:
-            # normal classification => shape [batch_size, 10]
-            return classification_out
+            # normal classification output
+            return base_out
 
 
 def verify_parameter_perturbation_watermark_relative(
@@ -249,8 +249,8 @@ def verify_parameter_perturbation_watermark_relative(
     tolerance=1e-3
 ):
     """
-    Compare final param values to the original param values stored at embedding time.
-    Good for param-perturbation watermark checks without assuming the param started at 0.
+    Compare final param values to original param values stored at embedding time.
+    Good for parameter-perturbation checks without assuming param=0.
     """
     param_items = []
     for name, param in model.named_parameters():
@@ -258,19 +258,17 @@ def verify_parameter_perturbation_watermark_relative(
             param_items.append((name, param))
     param_items.sort(key=lambda x: x[0])
 
-    # Same logic to re-select which parameters were used
     seed = int(hashlib.sha256((watermark_key + 'param_select').encode()).hexdigest(), 16) % (2**32)
     np.random.seed(seed)
 
     final_selected = []
     if original_params is not None:
-        # Only check those originally watermarked
+        # check only those originally watermarked
         for (name, param) in param_items:
             if name in original_params:
                 final_selected.append((name, param))
     else:
-        # If no original dict, fallback to everything (less robust)
-        final_selected = param_items
+        final_selected = param_items  # fallback, less robust
 
     if original_params is not None and len(final_selected) != len(original_params):
         logging.error("Mismatch: originally saved vs final param count. Verification may fail.")
@@ -285,7 +283,6 @@ def verify_parameter_perturbation_watermark_relative(
         if original_params and param_name in original_params:
             old_val = original_params[param_name]
         else:
-            # fallback if missing: assume zero-based
             old_val = np.zeros_like(param_tensor.detach().cpu().numpy())
 
         new_val = param_tensor.detach().cpu().numpy()
@@ -295,7 +292,7 @@ def verify_parameter_perturbation_watermark_relative(
         max_diff = np.max(diff_from_expected)
         if max_diff > tolerance:
             logging.error(
-                f"Param {param_name} exceeded tolerance: max diff {max_diff} > tolerance {tolerance}"
+                f"Param {param_name} exceeded tolerance: max diff {max_diff:.6f} > tolerance {tolerance}"
             )
             all_good = False
             break

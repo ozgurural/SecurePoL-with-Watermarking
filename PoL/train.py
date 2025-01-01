@@ -4,7 +4,7 @@
 #   1) Baseline PoL (no watermark),
 #   2) Feature-Based Watermark,
 #   3) Parameter-Perturbation Watermark,
-#   4) Non-Intrusive Watermark.
+#   4) Non-Intrusive Watermark (Option B: wrap final 10D classification output).
 
 import argparse
 import json
@@ -12,7 +12,7 @@ import logging
 import os
 import random
 import time
-import hashlib  # Ensure hashlib import is here at top
+import hashlib
 import numpy as np
 import torch
 import torch.nn as nn
@@ -25,7 +25,7 @@ from watermark_utils import (
     select_parameters_to_perturb,
     apply_parameter_perturbations,
     should_embed_watermark,
-    WatermarkModule,
+    WatermarkModule,             # Option B approach inside
     embed_feature_watermark,
     generate_watermark_target,
     verify_non_intrusive_watermark,
@@ -67,7 +67,8 @@ def train(
 ):
     """
     Trains a model with or without watermarking.
-    For parameter-perturbation watermarking, original param values are stored to verify changes.
+    For parameter-perturbation watermarking, original param values are stored
+    so we can verify changes (relative check).
     """
 
     k = int(k)
@@ -96,9 +97,8 @@ def train(
     net.apply(_weights_init)
 
     # If using non-intrusive watermark, wrap the base model
+    #   (Option B: final classification output is dimension 10 for CIFAR-10)
     if watermark_method == 'non_intrusive':
-        # Typically for CIFAR resnet20, final features are 64-dim (not 512).
-        # Ensure WatermarkModule is set up for that in watermark_utils.py
         net = WatermarkModule(net, watermark_key, watermark_size=watermark_size)
 
     net.to(device)
@@ -135,7 +135,7 @@ def train(
         if half:
             net.half().float()
 
-    # Prepare sequence if needed
+    # Prepare the training sequence if not provided
     if sequence is None:
         train_size = len(trainset)
         indices = np.arange(train_size)
@@ -157,17 +157,16 @@ def train(
         save_dir = os.path.join("proof", f"{dataset}_{exp_id}")
         os.makedirs(save_dir, exist_ok=True)
 
-        # Use hashlib to hash training data subset
+        from hashlib import sha256
         m = hashlib.sha256()
         if hasattr(trainset, 'data'):
             data = trainset.data[sequence]
         elif hasattr(trainset, 'train_data'):
             data = trainset.train_data[sequence]
         else:
-            raise AttributeError("No .data or .train_data in the dataset object.")
+            raise AttributeError("Dataset object has no 'data' or 'train_data' attribute.")
 
         logging.info(f"Data shape: {data.shape}, Data type: {data.dtype}")
-        from hashlib import sha256
         logging.info(f"First data sample hash: {sha256(data[0].tobytes()).hexdigest()}")
 
         if isinstance(data, np.ndarray):
@@ -238,6 +237,7 @@ def train(
 
     # Dictionary to store original param values for param-perturbation
     original_param_values = {}
+
     current_step = 0
     total_steps = len(trainloader) * epochs
 
@@ -250,8 +250,8 @@ def train(
             inputs, labels = inputs.to(device), labels.to(device)
             optimizer.zero_grad()
 
-            # Watermark method branches:
             if watermark_method == 'none':
+                # Baseline PoL
                 outputs = (
                     net(inputs)
                     if not isinstance(net, WatermarkModule)
@@ -260,9 +260,9 @@ def train(
                 loss = criterion(outputs, labels)
 
             elif watermark_method == 'feature_based':
+                # Feature-based watermark
                 features_list = []
 
-                # Proper forward hook signature: (module, input, output)
                 def forward_hook(module, module_input, module_output):
                     features_list.append(module_output)
 
@@ -283,6 +283,7 @@ def train(
                     logging.info(f"Feature-based watermark loss computed at step {current_step}")
 
             elif watermark_method == 'parameter_perturbation':
+                # Normal forward pass
                 outputs = net(inputs)
                 loss = criterion(outputs, labels)
 
@@ -290,9 +291,11 @@ def train(
                 # normal classification pass => trigger=False
                 outputs = net(inputs, trigger=False)
                 loss = criterion(outputs, labels)
+
+                # Non-intrusive watermark => trigger=True
                 if lambda_wm > 0 and should_embed_watermark(current_step, k, watermark_key, randomize):
-                    wm_target = generate_watermark_target(inputs, watermark_key, watermark_size)
-                    wm_out = net(inputs, trigger=True)
+                    wm_target = generate_watermark_target(inputs, watermark_key, watermark_size).to(device)
+                    wm_out = net(inputs, trigger=True)    # shape = [batch_size, watermark_size]
                     wm_loss = nn.MSELoss()(wm_out, wm_target)
                     loss += lambda_wm * wm_loss
                     logging.info(f"Non-intrusive watermark loss computed at step {current_step}")
@@ -300,27 +303,24 @@ def train(
             else:
                 raise ValueError(f"Unknown watermark method: {watermark_method}")
 
+            # Backprop + step
             loss.backward()
             optimizer.step()
 
-            # If parameter-perturbation is chosen (AFTER optimizer.step)
+            # Parameter-perturbation watermark (AFTER step)
             if watermark_method == 'parameter_perturbation' and lambda_wm > 0:
                 if should_embed_watermark(current_step, k, watermark_key, randomize):
-                    from watermark_utils import select_parameters_to_perturb, generate_watermark_pattern
-
-                    # Possibly skip BN if needed. Right now it excludes BN in the function.
                     selected_params = select_parameters_to_perturb(net, num_parameters, watermark_key)
-
-                    # Store snapshot for verification
+                    from watermark_utils import generate_watermark_pattern
                     for (pname, ptensor) in selected_params:
                         original_param_values[pname] = ptensor.detach().cpu().clone().numpy()
-
                     wpattern = generate_watermark_pattern(watermark_key, len(selected_params))
                     apply_parameter_perturbations(selected_params, wpattern, perturbation_strength)
                     logging.info(f"Parameter perturbation watermark applied at step {current_step}.")
 
             current_step += 1
 
+            # Possibly save checkpoint
             if save_dir and current_step % save_freq == 0:
                 checkpoint_state = {
                     'net': net.state_dict(),
@@ -337,7 +337,7 @@ def train(
             scheduler.step()
             logging.info(f"Scheduler stepped at epoch {epoch + 1}/{epochs}")
 
-    # Final checkpoint
+    # 9) Final checkpoint
     if save_dir:
         final_state = {
             'net': net.state_dict(),
@@ -378,7 +378,7 @@ def validate(dataset, model, batch_size=128):
         for inputs, labels in testloader:
             inputs, labels = inputs.to(device), labels.to(device)
 
-            # Non-intrusive WM => normal classification with trigger=False
+            # If non-intrusive WM => normal classification with trigger=False
             if hasattr(model, 'module') and isinstance(model.module, WatermarkModule):
                 outputs = model(inputs, trigger=False)
             elif isinstance(model, WatermarkModule):
@@ -475,9 +475,9 @@ if __name__ == '__main__':
         watermark_size=args.watermark_size
     )
 
-    # Post-training verification if needed
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+    # Post-training verification logic
     if args.watermark_method == 'none':
         logging.info("Baseline PoL, no watermark verification needed.")
         torch.save(trained_model.state_dict(), 'model_baseline_no_watermark.pth')
@@ -493,24 +493,22 @@ if __name__ == '__main__':
         logging.info("Saved feature-based watermark model at model_with_feature_based_watermark.pth")
 
     elif args.watermark_method == 'parameter_perturbation':
-        # Now do a relative-check approach
         from watermark_utils import verify_parameter_perturbation_watermark_relative
         detection_ok = verify_parameter_perturbation_watermark_relative(
             model=trained_model,
-            original_params=original_param_values,  # we have the dictionary from training
+            original_params=original_param_values,
             watermark_key=args.watermark_key,
             perturbation_strength=args.perturbation_strength,
-            tolerance=1e-1  # can adjust as needed for BN drift
+            tolerance=1e-1
         )
         if detection_ok:
             logging.info("Parameter-perturbation watermark verified at end of training.")
         else:
             logging.error("Parameter-perturbation watermark NOT verified at end of training.")
 
-        # Save final model + original_param_values inside .pth
         final_ckpt = {
             'net': trained_model.state_dict(),
-            'original_param_values': original_param_values  # store these for verify.py
+            'original_param_values': original_param_values
         }
         torch.save(final_ckpt, 'model_with_parameter_perturbation_watermark.pth')
         logging.info("Saved parameter-perturbation WM model at model_with_parameter_perturbation_watermark.pth")
