@@ -18,14 +18,14 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-import utils  # your local utils.py => must have `load_dataset()`
+import utils  # Must contain `load_dataset()` to get train/test sets
 
 from watermark_utils import (
     generate_watermark_pattern,
     select_parameters_to_perturb,
     apply_parameter_perturbations,
     should_embed_watermark,
-    WatermarkModule,
+    WatermarkModule,  # Non-intrusive WM Option B
     embed_feature_watermark,
     generate_watermark_target,
     verify_non_intrusive_watermark,
@@ -35,10 +35,9 @@ from watermark_utils import (
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def _weights_init(m):
-    """Kaiming init for Linear/Conv2d."""
+    """Kaiming initialization for linear or conv2d layers."""
     if isinstance(m, nn.Linear) or isinstance(m, nn.Conv2d):
         nn.init.kaiming_normal_(m.weight)
-
 
 def train(
     lr,
@@ -65,8 +64,8 @@ def train(
     watermark_size=128
 ):
     """
-    Trains a model with or without watermarking. For the 'non_intrusive' method (Option B),
-    we expect CIFAR-10 => base model outputs [batch_size, 10].
+    Trains a model with or without watermarking. For non-intrusive watermark,
+    we assume base model => [batch,10] for CIFAR-10, then wrap with WatermarkModule.
     """
 
     k = int(k)
@@ -78,14 +77,13 @@ def train(
     logging.info(f"Dataset loaded with {len(trainset)} samples.")
 
     if batch_size <= 0:
-        raise ValueError("Batch size must be positive.")
+        raise ValueError("Batch size must be a positive integer.")
 
     if num_gpu > torch.cuda.device_count():
         logging.warning(
-            f"Requested {num_gpu} GPUs, but only {torch.cuda.device_count()} available."
+            f"Requested {num_gpu} GPUs, but only {torch.cuda.device_count()} are available."
         )
         num_gpu = torch.cuda.device_count()
-
     if num_gpu > 1:
         batch_size *= num_gpu
         logging.info(f"Adjusted batch size for multiple GPUs: {batch_size}")
@@ -94,7 +92,7 @@ def train(
     net = architecture()
     net.apply(_weights_init)
 
-    # If using non-intrusive watermark, wrap the base model output [batch,10].
+    # If using non-intrusive => wrap it
     if watermark_method == 'non_intrusive':
         net = WatermarkModule(net, watermark_key, watermark_size=watermark_size)
 
@@ -120,7 +118,7 @@ def train(
 
     criterion = nn.CrossEntropyLoss().to(device)
 
-    # optionally load from checkpoint
+    # If loading from an existing checkpoint
     if model_dir is not None:
         state = torch.load(model_dir, map_location=device)
         net.load_state_dict(state['net'])
@@ -128,16 +126,15 @@ def train(
         if scheduler and 'scheduler' in state and state['scheduler'] is not None:
             scheduler.load_state_dict(state['scheduler'])
         logging.info(f"Loaded model from {model_dir}")
-
         if half:
             net.half().float()
 
     # Prepare sequence if not provided
     if sequence is None:
         train_size = len(trainset)
-        indices = np.arange(train_size)
-        np.random.shuffle(indices)
-        sequence = np.tile(indices, epochs)
+        idxs = np.arange(train_size)
+        np.random.shuffle(idxs)
+        sequence = np.tile(idxs, epochs)
         logging.info(f"Generated training sequence with length {len(sequence)}")
 
     # 4) Reproducibility
@@ -160,10 +157,10 @@ def train(
         elif hasattr(trainset, 'train_data'):
             data = trainset.train_data[sequence]
         else:
-            raise AttributeError("No .data or .train_data in the dataset object.")
+            raise AttributeError("Dataset object has no 'data' or 'train_data'.")
 
-        logging.info(f"Data shape: {data.shape}, Data type: {data.dtype}")
         from hashlib import sha256
+        logging.info(f"Data shape: {data.shape}, Data type: {data.dtype}")
         logging.info(f"First data sample hash: {sha256(data[0].tobytes()).hexdigest()}")
 
         if isinstance(data, np.ndarray):
@@ -174,11 +171,11 @@ def train(
         else:
             raise TypeError("Unsupported data type for hashing.")
 
-        computed_hash = m.hexdigest()
-        logging.info(f"Computed hash during training: {computed_hash}")
+        dataset_hash = m.hexdigest()
+        logging.info(f"Computed hash during training: {dataset_hash}")
 
         with open(os.path.join(save_dir, "hash.txt"), "w") as f:
-            f.write(computed_hash)
+            f.write(dataset_hash)
         logging.info("Saved dataset hash to hash.txt")
 
         np.save(os.path.join(save_dir, "indices.npy"), sequence)
@@ -197,7 +194,7 @@ def train(
         }
         with open(os.path.join(save_dir, "watermark_info.json"), "w") as f:
             json.dump(watermark_info, f)
-        logging.info("Saved watermarking information to watermark_info.json")
+        logging.info("Saved watermark info to watermark_info.json")
     else:
         save_dir = None
 
@@ -218,59 +215,62 @@ def train(
     logging.info(f"Epochs: {epochs}")
     logging.info(f"Optimizer: {optimizer.__class__.__name__}")
     if scheduler:
-        logging.info(
-            f"Scheduler: {scheduler.__class__.__name__}, milestones={dec_lr}, gamma={scheduler.gamma}"
-        )
+        logging.info(f"Scheduler: {scheduler.__class__.__name__}, milestones={dec_lr}, gamma={scheduler.gamma}")
 
     if save_dir:
-        initial_state = {
+        init_state = {
             'net': net.state_dict(),
             'optimizer': optimizer.state_dict(),
             'scheduler': scheduler.state_dict() if scheduler else None,
-            'step': 0,
+            'step': 0
         }
-        torch.save(initial_state, os.path.join(save_dir, "model_step_0"))
+        torch.save(init_state, os.path.join(save_dir, "model_step_0"))
         logging.info("Saved initial model checkpoint at step 0")
 
+    # If param-perturbation => store original param values
     original_param_values = {}
+
     current_step = 0
     total_steps = len(trainloader) * epochs
 
-    # 8) Training loop
+    # 8) Main training loop
     for epoch in range(epochs):
-        logging.info(f"Starting epoch {epoch + 1}/{epochs}")
+        logging.info(f"Starting epoch {epoch+1}/{epochs}")
         net.train()
 
         for batch_idx, (inputs, labels) in enumerate(trainloader):
             inputs, labels = inputs.to(device), labels.to(device)
             optimizer.zero_grad()
 
+            # Baseline or w/o watermark
             if watermark_method == 'none':
-                # baseline
-                outputs = net(inputs) if not isinstance(net, WatermarkModule) else net(inputs, trigger=False)
+                if isinstance(net, WatermarkModule):
+                    outputs = net(inputs, trigger=False)
+                else:
+                    outputs = net(inputs)
                 loss = criterion(outputs, labels)
 
             elif watermark_method == 'feature_based':
-                features_list = []
-
-                def forward_hook(module, module_input, module_output):
-                    features_list.append(module_output)
+                # Feature-based => embed small noise in intermediate feature
+                feats_list = []
+                def forward_hook(module, mod_in, mod_out):
+                    feats_list.append(mod_out)
 
                 if isinstance(net, nn.DataParallel):
-                    handle = net.module.layer1.register_forward_hook(forward_hook)
+                    h = net.module.layer1.register_forward_hook(forward_hook)
                 else:
-                    handle = net.layer1.register_forward_hook(forward_hook)
+                    h = net.layer1.register_forward_hook(forward_hook)
 
                 outputs = net(inputs)
-                handle.remove()
+                h.remove()
 
                 loss = criterion(outputs, labels)
                 if lambda_wm > 0 and should_embed_watermark(current_step, k, watermark_key, randomize):
-                    feats = features_list[0]
+                    feats = feats_list[0]
                     desired_feats, mask = embed_feature_watermark(feats, watermark_key, current_step)
                     wm_loss = nn.MSELoss()(feats * mask, desired_feats * mask)
                     loss += lambda_wm * wm_loss
-                    logging.info(f"Feature-based watermark loss computed at step {current_step}")
+                    logging.info(f"Feature-based WM loss computed at step={current_step}")
 
             elif watermark_method == 'parameter_perturbation':
                 outputs = net(inputs)
@@ -282,19 +282,20 @@ def train(
                 loss = criterion(outputs, labels)
 
                 if lambda_wm > 0 and should_embed_watermark(current_step, k, watermark_key, randomize):
+                    # produce random [batch, watermark_size] target => MSE
                     wm_target = generate_watermark_target(inputs, watermark_key, watermark_size).to(device)
-                    wm_out = net(inputs, trigger=True)  # => [batch, watermark_size]
+                    wm_out = net(inputs, trigger=True)
                     wm_loss = nn.MSELoss()(wm_out, wm_target)
                     loss += lambda_wm * wm_loss
-                    logging.info(f"Non-intrusive watermark loss computed at step {current_step}")
+                    logging.info(f"Non-intrusive WM loss computed at step={current_step}")
 
             else:
-                raise ValueError(f"Unknown watermark method: {watermark_method}")
+                raise ValueError(f"Unknown watermark method {watermark_method}")
 
             loss.backward()
             optimizer.step()
 
-            # param-perturbation after step
+            # If param-perturbation => embed after step
             if watermark_method == 'parameter_perturbation' and lambda_wm > 0:
                 if should_embed_watermark(current_step, k, watermark_key, randomize):
                     from watermark_utils import generate_watermark_pattern
@@ -303,12 +304,12 @@ def train(
                         original_param_values[pname] = ptensor.detach().cpu().clone().numpy()
                     wpattern = generate_watermark_pattern(watermark_key, len(selected_params))
                     apply_parameter_perturbations(selected_params, wpattern, perturbation_strength)
-                    logging.info(f"Parameter-perturbation watermark applied at step {current_step}.")
+                    logging.info(f"Parameter-perturbation WM applied at step={current_step}")
 
             current_step += 1
 
-            if save_dir and current_step % save_freq == 0:
-                checkpoint_state = {
+            if save_dir and (current_step % save_freq == 0):
+                cstate = {
                     'net': net.state_dict(),
                     'optimizer': optimizer.state_dict(),
                     'scheduler': scheduler.state_dict() if scheduler else None,
@@ -316,12 +317,12 @@ def train(
                     'original_param_values': original_param_values
                 }
                 ckpt_path = os.path.join(save_dir, f"model_step_{current_step}")
-                torch.save(checkpoint_state, ckpt_path)
-                logging.info(f"Saved checkpoint at step {current_step}")
+                torch.save(cstate, ckpt_path)
+                logging.info(f"Saved checkpoint at step={current_step}")
 
-        if scheduler is not None:
+        if scheduler:
             scheduler.step()
-            logging.info(f"Scheduler stepped at epoch {epoch + 1}/{epochs}")
+            logging.info(f"Scheduler stepped at epoch={epoch+1}/{epochs}")
 
     # 9) Final checkpoint
     if save_dir:
@@ -332,27 +333,23 @@ def train(
             'step': current_step,
             'original_param_values': original_param_values
         }
-        final_ckpt_path = os.path.join(save_dir, f"model_step_{current_step}")
-        torch.save(final_state, final_ckpt_path)
-        logging.info(f"Saved final model checkpoint at step {current_step}")
+        final_ckpt = os.path.join(save_dir, f"model_step_{current_step}")
+        torch.save(final_state, final_ckpt)
+        logging.info(f"Saved final model checkpoint at step={current_step}")
 
     return net, optimizer, criterion, original_param_values
-
 
 def validate(dataset, model, batch_size=128):
     """
     Validate final model accuracy on test set.
     """
     from watermark_utils import WatermarkModule
+    import utils
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     testset = utils.load_dataset(dataset, train=False, augment=False)
     testloader = torch.utils.data.DataLoader(
-        testset,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=2,
-        pin_memory=True
+        testset, batch_size=batch_size, shuffle=False, num_workers=2, pin_memory=True
     )
 
     model.to(device)
@@ -363,7 +360,6 @@ def validate(dataset, model, batch_size=128):
     with torch.no_grad():
         for inputs, labels in testloader:
             inputs, labels = inputs.to(device), labels.to(device)
-            # If non-intrusive => normal classification w/ trigger=False
             if hasattr(model, 'module') and isinstance(model.module, WatermarkModule):
                 outputs = model(inputs, trigger=False)
             elif isinstance(model, WatermarkModule):
@@ -375,41 +371,43 @@ def validate(dataset, model, batch_size=128):
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
 
-    accuracy = 100.0 * correct / total
-    logging.info(f'Validation Accuracy: {accuracy:.2f}%')
+    acc = 100.0 * correct / total
+    logging.info(f'Validation Accuracy: {acc:.2f}%')
     return correct / total
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="Training Script with or without Watermarking")
-    parser.add_argument('--batch-size', type=int, default=128, help='Batch size')
-    parser.add_argument('--lr', type=float, default=0.1, help='Learning rate')
-    parser.add_argument('--epochs', type=int, default=10, help='Number of epochs')
+    parser = argparse.ArgumentParser(description="Training with Watermarking (Option B for non-intrusive).")
+
+    parser.add_argument('--batch-size', type=int, default=128)
+    parser.add_argument('--lr', type=float, default=0.1)
+    parser.add_argument('--epochs', type=int, default=2)  # Increase beyond 2 for better watermark embedding
     parser.add_argument('--dataset', type=str, default="CIFAR10")
     parser.add_argument('--model', type=str, default="resnet20")
     parser.add_argument('--id', type=str, default='Batch100')
-    parser.add_argument('--save-freq', type=int, default=1000)
+    parser.add_argument('--save-freq', type=int, default=100)
     parser.add_argument('--num-gpu', type=int, default=torch.cuda.device_count())
     parser.add_argument('--milestone', nargs='+', type=int, default=None)
     parser.add_argument('--verify', type=int, default=0)
-    parser.add_argument('--lambda-wm', type=float, default=0.01)
-    parser.add_argument('--k', type=int, default=1000)
-    parser.add_argument('--randomize', action='store_true')
+    parser.add_argument('--lambda-wm', type=float, default=0.01,
+                        help="Watermark loss coefficient. Consider increasing to 0.1 or 1.0 for stronger effect.")
+    parser.add_argument('--k', type=int, default=1000,
+                        help="Watermark embedding frequency in steps. Lower this (e.g. 100) for more frequent embedding.")
+    parser.add_argument('--randomize', action='store_true',
+                        help="If set, embed watermark at random times with probability 1/k.")
     parser.add_argument('--watermark-key', type=str, default='secret_key')
-    parser.add_argument(
-        '--watermark-method',
-        type=str,
-        default='feature_based',
-        choices=['none', 'feature_based', 'parameter_perturbation', 'non_intrusive'],
-        help='Watermark method'
-    )
-    parser.add_argument('--num-parameters', type=int, default=1000)
-    parser.add_argument('--perturbation-strength', type=float, default=1e-5)
-    parser.add_argument('--watermark-size', type=int, default=128)
+    parser.add_argument('--watermark-method', type=str, default='non_intrusive',
+                        choices=['none', 'feature_based', 'parameter_perturbation', 'non_intrusive'])
+    parser.add_argument('--num-parameters', type=int, default=1000,
+                        help="Parameter-perturbation mode: how many parameters to perturb.")
+    parser.add_argument('--perturbation-strength', type=float, default=1e-5,
+                        help="Parameter-perturbation watermark strength.")
+    parser.add_argument('--watermark-size', type=int, default=128,
+                        help="For non_intrusive: final dimension. Possibly reduce to 32 if MSE is too high.")
 
     args = parser.parse_args()
 
-    # seeds
+    # Reproducibility
     seed = 777
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
@@ -421,8 +419,9 @@ if __name__ == '__main__':
     t1 = time.time()
     logging.info(f"Trying to allocate {args.num_gpu} GPUs")
 
+    # Dynamically load architecture
     try:
-        import model
+        import model  # local model.py => e.g. resnet20
         architecture = getattr(model, args.model)
     except AttributeError:
         try:
@@ -432,7 +431,7 @@ if __name__ == '__main__':
             logging.error(f"Model {args.model} not found in model.py or torchvision.models.")
             raise e
 
-    trained_model, optimizer, criterion, original_param_values = train(
+    trained_model, optimizer, criterion, original_params = train(
         lr=args.lr,
         batch_size=args.batch_size,
         epochs=args.epochs,
@@ -456,98 +455,87 @@ if __name__ == '__main__':
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    # Post-training verification
+    # Post-training step: verify the watermark if desired
     if args.watermark_method == 'none':
-        logging.info("Baseline PoL, no watermark verification needed.")
+        logging.info("No watermarking used. Saving baseline model.")
         torch.save(trained_model.state_dict(), 'model_baseline_no_watermark.pth')
-        logging.info("Saved baseline model at model_baseline_no_watermark.pth")
 
     elif args.watermark_method == 'feature_based':
-        run_feature_based_watermark_verification(
-            model=trained_model,
-            device=device,
-            watermark_key=args.watermark_key
-        )
+        run_feature_based_watermark_verification(trained_model, device=device, watermark_key=args.watermark_key)
         torch.save(trained_model.state_dict(), 'model_with_feature_based_watermark.pth')
-        logging.info("Saved feature-based watermark model at model_with_feature_based_watermark.pth")
+        logging.info("Saved model_with_feature_based_watermark.pth")
 
     elif args.watermark_method == 'parameter_perturbation':
         from watermark_utils import verify_parameter_perturbation_watermark_relative
         detection_ok = verify_parameter_perturbation_watermark_relative(
             model=trained_model,
-            original_params=original_param_values,
+            original_params=original_params,
             watermark_key=args.watermark_key,
             perturbation_strength=args.perturbation_strength,
-            tolerance=1e-1
+            tolerance=1e-1  # could relax further if BN offsets drift
         )
         if detection_ok:
-            logging.info("Parameter-perturbation watermark verified at end of training.")
+            logging.info("Param-perturbation watermark verified at end of training.")
         else:
-            logging.error("Parameter-perturbation watermark NOT verified at end of training.")
+            logging.error("Param-perturbation watermark NOT verified at end of training.")
 
-        final_ckpt = {
-            'net': trained_model.state_dict(),
-            'original_param_values': original_param_values
-        }
+        # Save final: net + original params
+        final_ckpt = {'net': trained_model.state_dict(), 'original_param_values': original_params}
         torch.save(final_ckpt, 'model_with_parameter_perturbation_watermark.pth')
-        logging.info("Saved parameter-perturbation WM model at model_with_parameter_perturbation_watermark.pth")
+        logging.info("Saved model_with_parameter_perturbation_watermark.pth")
 
     elif args.watermark_method == 'non_intrusive':
-        # If MSE is large, you can relax the tolerance below:
+        # If MSE is high, relax tolerance to 1e-2 or higher
         tolerance_nm = 1e-3
-        detected = verify_non_intrusive_watermark(
+        success = verify_non_intrusive_watermark(
             model=trained_model,
             device=device,
             watermark_key=args.watermark_key,
             watermark_size=args.watermark_size,
             tolerance=tolerance_nm
         )
-        if detected:
+        if success:
             logging.info("Non-intrusive watermark verified at end of training.")
         else:
             logging.error(
-                f"Non-intrusive watermark not verified at end of training; MSE exceeded {tolerance_nm}."
+                f"Non-intrusive watermark not verified; MSE > {tolerance_nm} after 2 short epochs."
             )
 
         torch.save(trained_model.state_dict(), 'model_with_non_intrusive_watermark.pth')
-        logging.info("Saved non-intrusive watermark model at model_with_non_intrusive_watermark.pth")
+        logging.info("Saved model_with_non_intrusive_watermark.pth")
 
-    # Final check on accuracy
-    def validate(dataset, model, batch_size=128):
+    # Validate final accuracy
+    def final_validate(dataset, model, batch_size=128):
         from watermark_utils import WatermarkModule
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        testset = utils.load_dataset(dataset, train=False, augment=False)
-        testloader = torch.utils.data.DataLoader(
-            testset,
-            batch_size=batch_size,
-            shuffle=False,
-            num_workers=2,
-            pin_memory=True
+        import utils
+        device_ = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        testset_ = utils.load_dataset(dataset, train=False, augment=False)
+        testloader_ = torch.utils.data.DataLoader(
+            testset_, batch_size=batch_size, shuffle=False, num_workers=2, pin_memory=True
         )
-        model.to(device)
+
+        model.to(device_)
         model.eval()
-
-        correct = 0
-        total = 0
+        corr = 0
+        ttl = 0
         with torch.no_grad():
-            for inputs, labels in testloader:
-                inputs, labels = inputs.to(device), labels.to(device)
+            for inp, lbl in testloader_:
+                inp, lbl = inp.to(device_), lbl.to(device_)
                 if hasattr(model, 'module') and isinstance(model.module, WatermarkModule):
-                    outputs = model(inputs, trigger=False)
+                    outs = model(inp, trigger=False)
                 elif isinstance(model, WatermarkModule):
-                    outputs = model(inputs, trigger=False)
+                    outs = model(inp, trigger=False)
                 else:
-                    outputs = model(inputs)
+                    outs = model(inp)
+                _, pred = torch.max(outs, dim=1)
+                ttl += lbl.size(0)
+                corr += (pred == lbl).sum().item()
 
-                _, predicted = torch.max(outputs, dim=1)
-                total += labels.size(0)
-                correct += (predicted == labels).sum().item()
+        accuracy = 100.0 * corr / ttl
+        logging.info(f"Validation Accuracy: {accuracy:.2f}%")
+        return corr / ttl
 
-        accuracy = 100.0 * correct / total
-        logging.info(f'Validation Accuracy: {accuracy:.2f}%')
-        return correct / total
-
-    validate(args.dataset, trained_model)
+    final_validate(args.dataset, trained_model)
 
     t2 = time.time()
     logging.info(f"Total training time: {t2 - t1:.2f} seconds")
