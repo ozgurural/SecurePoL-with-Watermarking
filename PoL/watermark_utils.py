@@ -62,7 +62,7 @@ def should_embed_watermark(step, k, watermark_key, randomize=False):
         # Seed with (watermark_key + str(step)) => embed if random < 1/k
         seed = int(hashlib.sha256((watermark_key + str(step)).encode()).hexdigest(), 16) % (2**32)
         torch.manual_seed(seed)
-        return (torch.rand(1).item() < (1.0 / k))
+        return torch.rand(1).item() < (1.0 / k)
     else:
         return (step % k) == 0
 
@@ -168,19 +168,18 @@ def verify_non_intrusive_watermark(model, device, watermark_key, watermark_size,
     """
     model.to(device)
     model.eval()
+
     triggers = generate_trigger_inputs(watermark_key, device)
     with torch.no_grad():
         watermark_out = model(triggers, trigger=True)
+        expected = generate_watermark_target(triggers, watermark_key, watermark_size).to(device)
+        mse_val = torch.mean((watermark_out - expected)**2).item()
 
-    expected = generate_watermark_target(triggers, watermark_key, watermark_size).to(device)
-    mse_val = torch.mean((watermark_out - expected)**2).item()
     if mse_val < tolerance:
         logging.info(f"Non-intrusive watermark detected. MSE={mse_val:.6f} < {tolerance}")
         return True
     else:
-        logging.error(
-            f"Non-intrusive watermark NOT detected; MSE={mse_val:.6f} > {tolerance}"
-        )
+        logging.error(f"Non-intrusive watermark NOT detected; MSE={mse_val:.6f} > {tolerance}")
         return False
 
 def generate_trigger_inputs(watermark_key, device):
