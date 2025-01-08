@@ -3,11 +3,11 @@
 # train.py
 #
 # Fully updated integrated training script for:
-#   1) Baseline PoL (no watermark),
-#   2) Feature-Based Watermark,
-#   3) Parameter-Perturbation Watermark,
-#   4) Non-Intrusive Watermark (Option B),
-# with improvements for more reliable watermark convergence and detection.
+#  1) Baseline PoL (no watermark),
+#  2) Feature-Based Watermark,
+#  3) Parameter-Perturbation Watermark,
+#  4) Non-Intrusive Watermark (Option B),
+# with improvements for more reliable watermark convergence and detection
 
 import argparse
 import json
@@ -68,8 +68,11 @@ def train(
 ):
     """
     Trains a model with or without watermarking, preserving PoL artifacts.
-    Optionally use a smaller subset_size < len(dataset) for faster training.
+    Reintroducing 'sequence' to allow partial replay in verify.py.
+    If 'sequence' is None, we do the usual subset + shuffle logic.
+    Otherwise, we use the provided sequence directly (e.g., partial replay).
     """
+
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     logging.info(f"Using device: {device}")
 
@@ -78,16 +81,18 @@ def train(
     full_train_size = len(trainset)
     logging.info(f"Dataset '{dataset}' loaded with {full_train_size} samples.")
 
+    # If no sequence is provided, create one from scratch (subset or full).
     if sequence is None:
-        logging.info(f"Dataset '{dataset}' loaded with {full_train_size} samples.")
         if subset_size is None or subset_size > full_train_size:
-            subset_size = full_train_size  # Use entire dataset by default
+            subset_size = full_train_size  # use entire dataset
+        logging.info(f"No 'sequence' provided. Using subset_size={subset_size} for training.")
 
-        logging.info(f"Using subset_size={subset_size} for training.")
         idxs = np.arange(full_train_size)
         np.random.shuffle(idxs)
-        sequence = idxs[:subset_size]  # Keep only subset_size samples
+        idxs = idxs[:subset_size]
+        sequence = idxs
     else:
+        # If 'sequence' was provided (e.g., partial replay), skip subset logic
         logging.info(f"Using provided sequence with length={len(sequence)}.")
 
     if batch_size <= 0:
@@ -161,7 +166,7 @@ def train(
         save_dir = os.path.join("proof", f"{dataset}_{exp_id}")
         os.makedirs(save_dir, exist_ok=True)
 
-        # Hash the subset we are using
+        # Hash the training data subset using 'sequence'
         m = hashlib.sha256()
         if hasattr(trainset, 'data'):
             data = trainset.data[sequence]
@@ -216,7 +221,7 @@ def train(
     trainloader = torch.utils.data.DataLoader(
         subset_ds,
         batch_size=batch_size,
-        shuffle=False,  # We already shuffled idxs
+        shuffle=False,  # We already shuffled or used partial indices if needed
         num_workers=2,
         pin_memory=True
     )
@@ -245,12 +250,11 @@ def train(
 
     original_param_values = {}
     current_step = 0
-    # We do NOT multiply by epochs again, because we do `for epoch in range(epochs):` below.
     total_steps = len(trainloader) * epochs
 
     # 8) Main training loop
     for epoch in range(epochs):
-        logging.info(f"Starting epoch {epoch+1}/{epochs}")
+        logging.info(f"Starting epoch {epoch + 1}/{epochs}")
         net.train()
 
         for batch_idx, (inputs, labels) in enumerate(trainloader):
@@ -259,7 +263,7 @@ def train(
             optimizer.zero_grad()
 
             if watermark_method == 'none':
-                # Baseline PoL
+                # baseline PoL
                 if isinstance(net, WatermarkModule):
                     outputs = net(inputs, trigger=False)
                 else:
@@ -272,7 +276,7 @@ def train(
                 def forward_hook(module, m_in, m_out):
                     feats_list.append(m_out)
 
-                # Example hooking into layer1 for a ResNet
+                # hooking into layer1 for ResNet (example)
                 if isinstance(net, nn.DataParallel):
                     hook_handle = net.module.layer1.register_forward_hook(forward_hook)
                 else:
@@ -283,7 +287,7 @@ def train(
 
                 loss = criterion(outputs, labels)
 
-                # Add watermark MSE if time to embed
+                # Add watermark MSE if time
                 if lambda_wm > 0 and should_embed_watermark(current_step, k, watermark_key, randomize):
                     feats = feats_list[0]
                     desired_feats, mask = embed_feature_watermark(feats, watermark_key, current_step)
@@ -314,7 +318,7 @@ def train(
             loss.backward()
             optimizer.step()
 
-            # Parameter perturbation => after step
+            # param-perturbation => after step
             if watermark_method == 'parameter_perturbation' and lambda_wm > 0:
                 if should_embed_watermark(current_step, k, watermark_key, randomize):
                     from watermark_utils import generate_watermark_pattern
@@ -342,7 +346,7 @@ def train(
 
         if scheduler:
             scheduler.step()
-            logging.info(f"Scheduler stepped at epoch={epoch+1}/{epochs}")
+            logging.info(f"Scheduler stepped at epoch={epoch + 1}/{epochs}")
 
     # 9) Final checkpoint
     if save_dir:
@@ -386,7 +390,6 @@ def validate(dataset, model, batch_size=128):
     with torch.no_grad():
         for inputs, labels in testloader:
             inputs, labels = inputs.to(device), labels.to(device)
-
             if hasattr(model, 'module') and isinstance(model.module, WatermarkModule):
                 outputs = model(inputs, trigger=False)
             elif isinstance(model, WatermarkModule):
@@ -404,7 +407,7 @@ def validate(dataset, model, batch_size=128):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser("Training with Non-Intrusive Watermark (Option B) - Shortened PoL")
+    parser = argparse.ArgumentParser("Training with Non-Intrusive Watermark (Option B) - Sequence-Enabled")
 
     # Basic training arguments
     parser.add_argument('--batch-size', type=int, default=128)
@@ -433,11 +436,11 @@ if __name__ == '__main__':
     parser.add_argument('--watermark-size', type=int, default=128,
                         help="Dimension for the non-intrusive watermark output layer")
 
-    # (New) Subset size to shorten training
+    # Subset for shortened training
     parser.add_argument('--subset-size', type=int, default=None,
-                        help="Use a smaller subset of the dataset for faster training. E.g. 10000 for 10k samples.")
+                        help="Use a smaller subset of the dataset for faster training (e.g., 10000).")
 
-    # Optional: verifying non-intrusive watermark tolerance
+    # Watermark verification tolerance
     parser.add_argument('--tolerance-wm', type=float, default=1e-3,
                         help="Verification tolerance for non-intrusive watermark MSE check.")
 
@@ -458,10 +461,12 @@ if __name__ == '__main__':
     # Dynamically load resnet20 from model.py or fallback to torchvision
     try:
         import model
+
         architecture = getattr(model, args.model)
     except AttributeError:
         try:
             import torchvision.models as tv_models
+
             architecture = getattr(tv_models, args.model)
         except AttributeError as e:
             logging.error(f"Model {args.model} not found in model.py or torchvision.")
@@ -488,12 +493,13 @@ if __name__ == '__main__':
         num_parameters=args.num_parameters,
         perturbation_strength=args.perturbation_strength,
         watermark_size=args.watermark_size,
-        subset_size=args.subset_size
+        subset_size=args.subset_size,
+        sequence=None  # Default to None; verify.py can supply partial if needed
     )
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    # Post-training: run final watermark checks if needed
+    # Post-training watermark checks
     if args.watermark_method == 'none':
         logging.info("No watermark used; baseline PoL.")
         torch.save(trained_model.state_dict(), 'model_baseline_no_watermark.pth')
@@ -509,6 +515,7 @@ if __name__ == '__main__':
 
     elif args.watermark_method == 'parameter_perturbation':
         from watermark_utils import verify_parameter_perturbation_watermark_relative
+
         detection_ok = verify_parameter_perturbation_watermark_relative(
             model=trained_model,
             original_params=original_param_values,
@@ -530,7 +537,6 @@ if __name__ == '__main__':
 
     elif args.watermark_method == 'non_intrusive':
         # Use user-provided tolerance for final check
-        from watermark_utils import verify_non_intrusive_watermark
         tolerance_nm = args.tolerance_wm
         success = verify_non_intrusive_watermark(
             model=trained_model,
@@ -548,6 +554,7 @@ if __name__ == '__main__':
             )
         torch.save(trained_model.state_dict(), 'model_with_non_intrusive_watermark.pth')
         logging.info("Saved model_with_non_intrusive_watermark.pth")
+
 
     # Finally, validate accuracy
     def final_validate(ds, mdl, bs=128):
@@ -581,6 +588,7 @@ if __name__ == '__main__':
         acc = 100.0 * corr / ttl
         logging.info(f'Validation Accuracy: {acc:.2f}%')
         return corr / ttl
+
 
     final_validate(args.dataset, trained_model)
 
