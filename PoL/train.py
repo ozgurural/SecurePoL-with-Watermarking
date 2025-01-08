@@ -27,7 +27,7 @@ from watermark_utils import (
     select_parameters_to_perturb,
     apply_parameter_perturbations,
     should_embed_watermark,
-    WatermarkModule,       # Non-intrusive option
+    WatermarkModule,  # Non-intrusive option
     embed_feature_watermark,
     generate_watermark_target,
     verify_non_intrusive_watermark,
@@ -36,12 +36,10 @@ from watermark_utils import (
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-
 def _weights_init(m):
     """Applies Kaiming initialization to Linear or Conv2d layers."""
     if isinstance(m, nn.Linear) or isinstance(m, nn.Conv2d):
         nn.init.kaiming_normal_(m.weight)
-
 
 def train(
     lr,
@@ -52,6 +50,7 @@ def train(
     exp_id=None,
     model_dir=None,
     save_freq=None,
+    sequence=None,
     num_gpu=torch.cuda.device_count(),
     verify=False,
     dec_lr=None,
@@ -69,7 +68,6 @@ def train(
 ):
     """
     Trains a model with or without watermarking, preserving PoL artifacts.
-    Removed 'np.tile' approach, so we don't double count epochs.
     Optionally use a smaller subset_size < len(dataset) for faster training.
     """
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -80,15 +78,17 @@ def train(
     full_train_size = len(trainset)
     logging.info(f"Dataset '{dataset}' loaded with {full_train_size} samples.")
 
-    # Possibly limit the dataset size
-    if subset_size is None or subset_size > full_train_size:
-        subset_size = full_train_size  # use entire dataset
-    logging.info(f"Using subset_size={subset_size} for training.")
+    if sequence is None:
+        logging.info(f"Dataset '{dataset}' loaded with {full_train_size} samples.")
+        if subset_size is None or subset_size > full_train_size:
+            subset_size = full_train_size  # Use entire dataset by default
 
-    idxs = np.arange(full_train_size)
-    np.random.shuffle(idxs)
-    idxs = idxs[:subset_size]  # keep only subset_size
-    sequence = idxs  # No tiling here
+        logging.info(f"Using subset_size={subset_size} for training.")
+        idxs = np.arange(full_train_size)
+        np.random.shuffle(idxs)
+        sequence = idxs[:subset_size]  # Keep only subset_size samples
+    else:
+        logging.info(f"Using provided sequence with length={len(sequence)}.")
 
     if batch_size <= 0:
         raise ValueError("Batch size must be positive.")
@@ -216,7 +216,7 @@ def train(
     trainloader = torch.utils.data.DataLoader(
         subset_ds,
         batch_size=batch_size,
-        shuffle=False,   # We already shuffled idxs
+        shuffle=False,  # We already shuffled idxs
         num_workers=2,
         pin_memory=True
     )
@@ -259,7 +259,7 @@ def train(
             optimizer.zero_grad()
 
             if watermark_method == 'none':
-                # baseline PoL
+                # Baseline PoL
                 if isinstance(net, WatermarkModule):
                     outputs = net(inputs, trigger=False)
                 else:
@@ -314,7 +314,7 @@ def train(
             loss.backward()
             optimizer.step()
 
-            # param-perturbation => after step
+            # Parameter perturbation => after step
             if watermark_method == 'parameter_perturbation' and lambda_wm > 0:
                 if should_embed_watermark(current_step, k, watermark_key, randomize):
                     from watermark_utils import generate_watermark_pattern
