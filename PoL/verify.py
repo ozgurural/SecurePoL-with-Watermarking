@@ -23,8 +23,7 @@ import utils
 from train import train
 import model as custom_model
 
-# We import the 'relative' function for parameter-perturbation verification,
-# and a function to verify the non_intrusive approach.
+# If you rely on more advanced watermark verifications:
 from watermark_utils import (
     verify_parameter_perturbation_watermark_relative,
     verify_non_intrusive_watermark
@@ -61,7 +60,6 @@ def extract_features_for_fb(model, inputs, layer_name='layer1'):
     return features[0]
 
 def check_feature_watermark(features, threshold=0.01):
-    """Heuristic: if mean(features) > threshold => watermark detected."""
     mean_val = features.mean().item()
     return (mean_val > threshold)
 
@@ -120,6 +118,7 @@ def verify_all(model_directory, lr, batch_size, dataset, model_arch, save_freq,
     if not os.path.exists(model_directory):
         raise FileNotFoundError("Model directory not found.")
 
+    # Load the indices used for training
     sequence = np.load(os.path.join(model_directory, "indices.npy"))
 
     if not isinstance(order, list):
@@ -147,9 +146,8 @@ def verify_all(model_directory, lr, batch_size, dataset, model_arch, save_freq,
 
         logging.debug(f"Reproducing training from {current_step} to {next_step} for verification.")
 
-        # -- FIX below --
-        # Use the same watermark_method that was originally used,
-        # but set lambda_wm=0.0 so we don't embed a new watermark.
+        # Pass the same watermark_method, k, randomize, etc. as originally used
+        # BUT set lambda_wm=0 to avoid embedding a second watermark
         net_rep, _, _, _ = train(
             lr=lr,
             batch_size=batch_size,
@@ -159,11 +157,11 @@ def verify_all(model_directory, lr, batch_size, dataset, model_arch, save_freq,
             model_dir=current_model,
             sequence=sequence[start_sequence_idx:end_sequence_idx],
             half=half,
-            lambda_wm=0.0,
-            k=k,
-            randomize=randomize,
+            lambda_wm=0.0,          # no new watermark
+            k=k,                    # same k value as original
+            randomize=randomize,    # same randomize as original
             watermark_key=watermark_key,
-            watermark_method=watermark_method,  # <-- FIX: Use original watermark_method
+            watermark_method=watermark_method,  # use the actual method, e.g. 'non_intrusive'
             num_parameters=num_parameters,
             perturbation_strength=perturbation_strength,
             watermark_size=watermark_size
@@ -260,8 +258,6 @@ def verify_topq(model_directory, lr, batch_size, dataset, model_arch, save_freq,
             start_seq = cstep * batch_size
             end_seq = min(nstep * batch_size, len(sequence))
 
-            # -- FIX below --
-            # Use original watermark method structure:
             net_rep, _, _, _ = train(
                 lr=lr,
                 batch_size=batch_size,
@@ -271,11 +267,11 @@ def verify_topq(model_directory, lr, batch_size, dataset, model_arch, save_freq,
                 model_dir=cmodel,
                 sequence=sequence[start_seq:end_seq],
                 half=half,
-                lambda_wm=0.0,  # No new watermark
-                k=k,
+                lambda_wm=0.0,      # no new watermark
+                k=k,                # same k as original
                 randomize=randomize,
                 watermark_key=watermark_key,
-                watermark_method=watermark_method,  # <-- FIX: Use original watermark_method
+                watermark_method=watermark_method,  # same method, e.g. non_intrusive
                 num_parameters=num_parameters,
                 perturbation_strength=perturbation_strength,
                 watermark_size=watermark_size
@@ -311,8 +307,8 @@ def verify_topq(model_directory, lr, batch_size, dataset, model_arch, save_freq,
 
 def verify_initialization(model_directory, model_arch, threshold=0.01, net=None, verbose=True):
     """
-    If the model was a WatermarkModule, we have to match that structure for loading.
-    Otherwise, load directly into base model.
+    Checks if model was wrapped by WatermarkModule. If so, replicate that structure
+    for correct loading. Then optionally check some param initialization heuristics.
     """
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     if net is None:
@@ -338,7 +334,6 @@ def verify_initialization(model_directory, model_arch, threshold=0.01, net=None,
     model_name = model_arch.__name__
 
     import utils
-    # Distinguish among resnet variants
     if model_name in ['resnet20','resnet32','resnet44','resnet56','resnet110','resnet1202']:
         model_type = 'resnet_cifar'
     elif model_name == 'resnet50':
@@ -487,7 +482,7 @@ if __name__ == '__main__':
             k=k,
             randomize=randomize,
             watermark_key=watermark_key,
-            watermark_method=watermark_method,  # <-- FIX: Pass original watermark_method
+            watermark_method=watermark_method,
             num_parameters=num_parameters,
             perturbation_strength=perturbation_strength,
             watermark_size=watermark_size
@@ -508,7 +503,7 @@ if __name__ == '__main__':
             k=k,
             randomize=randomize,
             watermark_key=watermark_key,
-            watermark_method=watermark_method,  # <-- FIX: Pass original watermark_method
+            watermark_method=watermark_method,
             num_parameters=num_parameters,
             perturbation_strength=perturbation_strength,
             watermark_size=watermark_size

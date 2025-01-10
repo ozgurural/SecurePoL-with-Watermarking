@@ -1,9 +1,14 @@
+# utils.py
+
 import torch
 import numpy as np
 from scipy import stats
 import torch.nn as nn
 import torchvision
 import torchvision.transforms as transforms
+
+from watermark_utils import WatermarkModule  # <-- PATCH: So we can instantiate WatermarkModule if needed.
+
 
 def get_parameters(net, numpy=False):
     # Flatten the model's parameters as a single tensor
@@ -12,14 +17,15 @@ def get_parameters(net, numpy=False):
     parameter = torch.cat([p.data.reshape([-1]) for p in list(net.parameters())])
     return parameter.cpu().numpy() if numpy else parameter
 
+
 def set_parameters(net, parameters, device):
     # Unflatten & load weights from a list of np arrays to a torch model
     for i, (name, param) in enumerate(net.named_parameters()):
         param.data = torch.Tensor(parameters[i]).to(device)
     return net
 
+
 def create_sequences(batch_size, dataset_size, epochs):
-    # Create a sequence of data indices used for training
     sequence = np.concatenate([
         np.random.default_rng().choice(dataset_size, size=dataset_size, replace=False)
         for _ in range(epochs)
@@ -27,32 +33,91 @@ def create_sequences(batch_size, dataset_size, epochs):
     num_batch = int(len(sequence) // batch_size)
     return np.reshape(sequence[:num_batch * batch_size], [num_batch, batch_size])
 
-def consistent_type(model, architecture=None,
-                    device=torch.device('cuda:0' if torch.cuda.is_available() else 'cpu'),
-                    half=False):
-    # Ensure model weights are in consistent format
+
+def consistent_type(
+        model,
+        architecture=None,
+        device=torch.device('cuda:0' if torch.cuda.is_available() else 'cpu'),
+        half=False,
+        watermark_key="secret_key",  # <-- PATCH: Added these two
+        watermark_size=128  # <-- PATCH: so we can create WatermarkModule if needed
+):
+    """
+    Ensures 'model' is loaded as a single flat weights tensor on the given device,
+    but also checks if the checkpoint has 'original_model.*' keys. If yes, we wrap
+    the base architecture with WatermarkModule before load_state_dict().
+    """
     if isinstance(model, str):
-        assert architecture is not None
+        assert architecture is not None, "Need architecture if 'model' is a path"
         state = torch.load(model)
-        net = architecture()
-        net.load_state_dict(state['net'])
+
+        # <-- PATCH: Detect if checkpoint has "original_model."
+        has_prefix = False
+        if 'net' in state:
+            net_dict = state['net']
+            has_prefix = any(k.startswith("original_model.") for k in net_dict.keys())
+        else:
+            # If there's no 'net' sub-dict, fallback
+            net_dict = state
+            has_prefix = any(k.startswith("original_model.") for k in net_dict.keys())
+
+        # Based on has_prefix, create correct net
+        if has_prefix:
+            base_net = architecture()
+            net = WatermarkModule(base_net, watermark_key, watermark_size=watermark_size)
+        else:
+            net = architecture()
+
+        net.load_state_dict(net_dict)
+        net.to(device)
         weights = get_parameters(net)
+
     elif isinstance(model, np.ndarray):
         weights = torch.tensor(model)
+
     elif not isinstance(model, torch.Tensor):
+        # Possibly a loaded model object
+        # Convert to flatten
         weights = get_parameters(model)
     else:
+        # model is already a Tensor
         weights = model
+
     if half:
         weights = weights.half()
     return weights.to(device)
 
-def parameter_distance(model1, model2, order=2, architecture=None, half=False):
-    # Compute difference between two checkpoints
-    w1 = consistent_type(model1, architecture, half=half)
-    w2 = consistent_type(model2, architecture, half=half)
-    orders = [order] if not isinstance(order, list) else order
 
+def parameter_distance(
+        model1,
+        model2,
+        order=2,
+        architecture=None,
+        half=False,
+        # <-- PATCH: pass watermark info so consistent_type can load WatermarkModule if needed
+        watermark_key="secret_key",
+        watermark_size=128
+):
+    """
+    Compute difference between two checkpoints, returning a list of distances
+    (one per 'order' if it's a list).
+    """
+    w1 = consistent_type(
+        model1,
+        architecture=architecture,
+        half=half,
+        watermark_key=watermark_key,  # <-- PATCH
+        watermark_size=watermark_size  # <-- PATCH
+    )
+    w2 = consistent_type(
+        model2,
+        architecture=architecture,
+        half=half,
+        watermark_key=watermark_key,  # <-- PATCH
+        watermark_size=watermark_size  # <-- PATCH
+    )
+
+    orders = [order] if not isinstance(order, list) else order
     results = []
     for o in orders:
         if o == 'inf':
@@ -70,6 +135,7 @@ def parameter_distance(model1, model2, order=2, architecture=None, half=False):
             val = torch.norm(w1 - w2, p=o)
             results.append(val.cpu().item())
     return results
+
 
 def load_dataset(dataset, train, download=True, augment=True):
     # Load dataset with optional augmentation
@@ -117,15 +183,16 @@ def load_dataset(dataset, train, download=True, augment=True):
     data = dataset_class(root='./data', train=train, download=download, transform=transform)
     return data
 
+
 def ks_test(reference, rvs):
     device = rvs.device
     with torch.no_grad():
-        ecdf = torch.arange(1, rvs.shape[0] + 1, dtype=torch.float32,
-                            device=device) / rvs.shape[0]
+        ecdf = torch.arange(1, rvs.shape[0] + 1, dtype=torch.float32, device=device) / rvs.shape[0]
         sorted_rvs, _ = torch.sort(rvs)
         cdf_vals = reference(sorted_rvs)
         ks_stat = torch.max(torch.abs(cdf_vals - ecdf)).item()
     return ks_stat
+
 
 def check_weights_initialization(param, method):
     if method == 'default':
@@ -165,6 +232,7 @@ def check_weights_initialization(param, method):
     ks_stat = ks_test(reference, rvs)
     p_value = stats.kstwo.sf(ks_stat, rvs.shape[0])
     return p_value
+
 
 def test_accuracy(test_loader, model, num_samples):
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
