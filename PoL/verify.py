@@ -532,7 +532,7 @@ if __name__ == '__main__':
             device=device,
             watermark_key=watermark_key,
             watermark_size=watermark_size,
-            tolerance=1e-1
+            tolerance=1
         )
         if wd:
             logging.info("Non-intrusive Watermark is present.")
