@@ -133,7 +133,7 @@ def verify_all(
         if e <= s:
             skipped += 1
             if skipped == 1 or not skip_once:
-                logging.DEBUG(f"[skip] {cur}->{nxt} (empty slice)")
+                logging.debug(f"[skip] {cur}->{nxt} (empty slice)")
             continue
 
         net, *_ = _run_train_silent(
