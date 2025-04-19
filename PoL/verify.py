@@ -201,7 +201,7 @@ def verify_topq(
             c, n = ck[st + ind], ck[st + ind + 1]
             s, e = c * batch_size, min(n * batch_size, len(seq))
             if e <= s:
-                logging.warning(f"[skip] {c}->{n} (empty slice)")
+                logging.debug(f"[skip] {c}->{n} (empty slice)")
                 continue
 
             net, *_ = _run_train_silent(
