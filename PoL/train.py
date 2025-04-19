@@ -5,7 +5,7 @@
 #   1) Baseline PoL (no watermark),
 #   2) Feature‑Based Watermark,
 #   3) Parameter‑Perturbation Watermark,
-#   4) Non‑Intrusive Watermark (Option B),
+#   4) Non‑Intrusive Watermark (Option B),
 # plus: epoch‑level validation, metric logging, optional TensorBoard.
 
 import argparse
@@ -37,11 +37,12 @@ from watermark_utils import (  # local watermark_utils.py
     run_feature_based_watermark_verification,
 )
 
+
 # --------------------------------------------------------------------------- #
 #                                LOGGING SETUP                                #
 # --------------------------------------------------------------------------- #
 
-def _init_logging(save_dir: str | None):
+def _init_logging(save_dir: str | None, verbose: bool = False):  # NEW: Add verbose parameter
     """
     Configure logging: console + (optional) train.log file.
     """
@@ -50,10 +51,11 @@ def _init_logging(save_dir: str | None):
         os.makedirs(save_dir, exist_ok=True)
         handlers.append(logging.FileHandler(os.path.join(save_dir, "train.log")))
     logging.basicConfig(
-        level=logging.INFO,
+        level=logging.DEBUG if verbose else logging.INFO,  # NEW: Use DEBUG level if verbose
         format="%(asctime)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s",
         handlers=handlers,
     )
+
 
 # --------------------------------------------------------------------------- #
 #                          WEIGHT INITIALISATION                              #
@@ -62,6 +64,7 @@ def _init_logging(save_dir: str | None):
 def _weights_init(m):
     if isinstance(m, (nn.Linear, nn.Conv2d)):
         nn.init.kaiming_normal_(m.weight)
+
 
 # --------------------------------------------------------------------------- #
 #                                  TRAINING                                   #
@@ -75,7 +78,7 @@ def train(
         architecture,
         augment: bool = False,
         exp_id: str | None = None,
-        model_dir: str | None = None,
+        model_dir: str | None = None,  # NEW: Renamed from save_dir to model_dir for clarity
         save_freq: int | None = None,
         sequence=None,
         num_gpu: int = torch.cuda.device_count(),
@@ -93,6 +96,9 @@ def train(
         watermark_size: int = 128,
         subset_size: int | None = None,
         log_tb: bool = False,
+        log_dir: str | None = None,  # NEW: Add log_dir parameter for TensorBoard
+        scheduler_type: str = "step",  # NEW: Add scheduler_type parameter
+        verbose: bool = False,  # NEW: Add verbose parameter
 ):
     """
     Train a model and (optionally) embed a watermark.
@@ -104,12 +110,11 @@ def train(
     # ----------------------------------------------------------------------- #
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # save_dir is only created if we checkpoint ; keep early for logging init
-    save_dir = None
-    if save_freq and save_freq > 0:
-        save_dir = os.path.join("proof", f"{dataset}_{exp_id or datetime.now().strftime('%Y%m%d_%H%M%S')}")
+    # Use model_dir if provided, otherwise fallback to default
+    if model_dir is None:
+        model_dir = os.path.join("proof", f"{dataset}_{exp_id or datetime.now().strftime('%Y%m%d_%H%M%S')}")
 
-    _init_logging(save_dir)
+    _init_logging(model_dir, verbose=verbose)  # NEW: Pass verbose to logging
     logging.info(f"Using device: {device}")
 
     # ----------------------------------------------------------------------- #
@@ -155,6 +160,7 @@ def train(
     # ----------------------------------------------------------------------- #
     #  3.  Optimiser & LR scheduler                                           #
     # ----------------------------------------------------------------------- #
+    # NEW: Support different scheduler types
     if dataset == "MNIST":
         optimizer = optim.SGD(net.parameters(), lr=lr)
         scheduler = None
@@ -163,8 +169,13 @@ def train(
             dec_lr = [epochs // 2, int(epochs * 0.75)]
         wd = 1e-4 if dataset == "CIFAR10" else 5e-4
         optimizer = optim.SGD(net.parameters(), lr=lr, momentum=0.9, weight_decay=wd)
-        gamma = 0.1 if dataset == "CIFAR10" else 0.2
-        scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=dec_lr, gamma=gamma)
+        if scheduler_type == "step":
+            gamma = 0.1 if dataset == "CIFAR10" else 0.2
+            scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=dec_lr, gamma=gamma)
+        elif scheduler_type == "cosine":
+            scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+        else:
+            scheduler = None
     else:
         optimizer = optim.Adam(net.parameters(), lr=lr)
         scheduler = None
@@ -175,8 +186,8 @@ def train(
     # ----------------------------------------------------------------------- #
     #  4.  Optionally resume                                                  #
     # ----------------------------------------------------------------------- #
-    if model_dir is not None:
-        state = torch.load(model_dir, map_location=device)
+    if resume and os.path.exists(os.path.join(model_dir, "model_step_0")):
+        state = torch.load(os.path.join(model_dir, "model_step_0"), map_location=device)
         net.load_state_dict(state["net"])
         optimizer.load_state_dict(state["optimizer"])
         if scheduler and state.get("scheduler"):
@@ -200,33 +211,32 @@ def train(
     # ----------------------------------------------------------------------- #
     #  6.  PoL artefacts / checkpoint dir                                     #
     # ----------------------------------------------------------------------- #
-    if save_dir:
-        os.makedirs(save_dir, exist_ok=True)
+    os.makedirs(model_dir, exist_ok=True)
 
-        # dataset hash
-        m = hashlib.sha256()
-        data_array = getattr(trainset, "data", getattr(trainset, "train_data", None))
-        if data_array is None:
-            raise AttributeError("Dataset object has neither '.data' nor '.train_data'.")
-        m.update(data_array[sequence].tobytes())
-        with open(os.path.join(save_dir, "hash.txt"), "w") as f:
-            f.write(m.hexdigest())
-        np.save(os.path.join(save_dir, "indices.npy"), sequence)
+    # dataset hash
+    m = hashlib.sha256()
+    data_array = getattr(trainset, "data", getattr(trainset, "train_data", None))
+    if data_array is None:
+        raise AttributeError("Dataset object has neither '.data' nor '.train_data'.")
+    m.update(data_array[sequence].tobytes())
+    with open(os.path.join(model_dir, "hash.txt"), "w") as f:
+        f.write(m.hexdigest())
+    np.save(os.path.join(model_dir, "indices.npy"), sequence)
 
-        wm_info = dict(
-            watermark_key=watermark_key,
-            lambda_wm=lambda_wm,
-            k=k,
-            randomize=randomize,
-            seed=seed,
-            watermark_method=watermark_method,
-            num_parameters=num_parameters,
-            perturbation_strength=perturbation_strength,
-            watermark_size=watermark_size,
-            subset_size=subset_size,
-        )
-        with open(os.path.join(save_dir, "watermark_info.json"), "w") as f:
-            json.dump(wm_info, f, indent=2)
+    wm_info = dict(
+        watermark_key=watermark_key,
+        lambda_wm=lambda_wm,
+        k=k,
+        randomize=randomize,
+        seed=seed,
+        watermark_method=watermark_method,
+        num_parameters=num_parameters,
+        perturbation_strength=perturbation_strength,
+        watermark_size=watermark_size,
+        subset_size=subset_size,
+    )
+    with open(os.path.join(model_dir, "watermark_info.json"), "w") as f:
+        json.dump(wm_info, f, indent=2)
 
     # ----------------------------------------------------------------------- #
     #  7.  DataLoader                                                         #
@@ -245,19 +255,18 @@ def train(
     writer_ctx = nullcontext()
     if log_tb:
         from torch.utils.tensorboard import SummaryWriter
-        writer_ctx = SummaryWriter(log_dir=save_dir or "./runs")
+        # NEW: Use log_dir if provided, otherwise fallback to model_dir or default
+        tb_log_dir = log_dir if log_dir else (model_dir or "./runs")
+        writer_ctx = SummaryWriter(log_dir=tb_log_dir)
 
     # ----------------------------------------------------------------------- #
     #  9.  Metric containers                                                  #
     # ----------------------------------------------------------------------- #
     metrics = []  # list of dicts (one per epoch)
 
-    # Helpers for CSV / JSON dump
     def _dump_metrics():
-        if not save_dir:
-            return
-        csv_path = os.path.join(save_dir, "metrics.csv")
-        json_path = os.path.join(save_dir, "metrics.json")
+        csv_path = os.path.join(model_dir, "metrics.csv")
+        json_path = os.path.join(model_dir, "metrics.json")
 
         # CSV
         fieldnames = metrics[0].keys()
@@ -277,7 +286,7 @@ def train(
     original_param_values = {}
 
     def _save_checkpoint(step: int):
-        if not save_dir or save_freq is None or step % save_freq:
+        if save_freq is None or step % save_freq:
             return
         ckpt = dict(
             net=net.state_dict(),
@@ -286,11 +295,10 @@ def train(
             step=step,
             original_param_values=original_param_values,
         )
-        torch.save(ckpt, os.path.join(save_dir, f"model_step_{step}"))
+        torch.save(ckpt, os.path.join(model_dir, f"model_step_{step}"))
         logging.info(f"Checkpoint saved @step {step}")
 
-    if save_dir:
-        _save_checkpoint(0)
+    _save_checkpoint(0)
 
     # ----------------------------------------------------------------------- #
     # 11.  Main loop                                                          #
@@ -316,7 +324,8 @@ def train(
                     def _hook(_, __, out):
                         feats_list.append(out)
 
-                    handle = (net.module if isinstance(net, nn.DataParallel) else net).layer1.register_forward_hook(_hook)
+                    handle = (net.module if isinstance(net, nn.DataParallel) else net).layer1.register_forward_hook(
+                        _hook)
                     outputs = net(inputs)
                     handle.remove()
 
@@ -366,7 +375,8 @@ def train(
             val_loss, val_acc = validate(dataset, net, criterion)
 
             # scheduler step
-            if scheduler: scheduler.step()
+            if scheduler:
+                scheduler.step()
 
             # record metrics
             lr_cur = scheduler.get_last_lr()[0] if scheduler else lr
@@ -395,11 +405,11 @@ def train(
     # ----------------------------------------------------------------------- #
     # 12.  Final checkpoint                                                   #
     # ----------------------------------------------------------------------- #
-    if save_dir:
-        _save_checkpoint(current_step)
+    _save_checkpoint(current_step)
 
     logging.info("=== Training Completed ===")
     return net, optimizer, criterion, original_param_values
+
 
 # --------------------------------------------------------------------------- #
 #                               VALIDATION                                    #
@@ -437,6 +447,7 @@ def validate(dataset, model, criterion, batch_size: int = 128):
     val_acc = correct / total
     return val_loss, val_acc
 
+
 # --------------------------------------------------------------------------- #
 #                            ARGPARSE INTERFACE                               #
 # --------------------------------------------------------------------------- #
@@ -455,6 +466,20 @@ if __name__ == "__main__":
     parser.add_argument("--milestone", nargs="+", type=int, default=None)
     parser.add_argument("--verify", action="store_true")
 
+    # NEW: Add scheduler argument
+    parser.add_argument("--scheduler", type=str, default="step", choices=["none", "step", "cosine"],
+                        help="Learning rate scheduler type")
+
+    # NEW: Add model-dir and log-dir arguments
+    parser.add_argument("--model-dir", type=str, default=None,
+                        help="Directory to save model checkpoints and PoL artifacts")
+    parser.add_argument("--log-dir", type=str, default=None,
+                        help="Directory for TensorBoard logs (if --log-tb is set)")
+
+    # NEW: Add verbose argument
+    parser.add_argument("--verbose", action="store_true",
+                        help="Enable verbose logging for debugging")
+
     # Watermark
     parser.add_argument("--lambda-wm", type=float, default=0.3)
     parser.add_argument("--k", type=int, default=200)
@@ -471,10 +496,10 @@ if __name__ == "__main__":
     parser.add_argument("--subset-size", type=int, default=None)
     parser.add_argument("--tolerance-wm", type=float, default=1e-3)
 
-    # NEW: TensorBoard flag
+    # TensorBoard flag
     parser.add_argument("--log-tb", action="store_true", help="Enable TensorBoard logging")
 
-    # NEW: data‑augmentation flag
+    # Data‑augmentation flag
     parser.add_argument("--augment", action="store_true",
                         help="If set, apply CIFAR-style random crop+flip during training")
 
@@ -493,9 +518,11 @@ if __name__ == "__main__":
     # Resolve architecture
     try:
         import model as custom_models
+
         architecture = getattr(custom_models, args.model)
     except AttributeError:
         import torchvision.models as tv_models
+
         architecture = getattr(tv_models, args.model)
 
     # ----- TRAIN ----------------------------------------------------------- #
@@ -506,6 +533,7 @@ if __name__ == "__main__":
         dataset=args.dataset,
         architecture=architecture,
         exp_id=args.id,
+        model_dir=args.model_dir,  # NEW: Pass model_dir
         save_freq=args.save_freq,
         num_gpu=args.num_gpu,
         dec_lr=args.milestone,
@@ -520,7 +548,9 @@ if __name__ == "__main__":
         watermark_size=args.watermark_size,
         subset_size=args.subset_size,
         log_tb=args.log_tb,
-        augment=args.augment,
+        log_dir=args.log_dir,  # NEW: Pass log_dir
+        scheduler_type=args.scheduler,  # NEW: Pass scheduler type
+        verbose=args.verbose,  # NEW: Pass verbose
     )
 
     # ----- POST‑TRAINING WATERMARK CHECKS AND MODEL SAVING ----------------- #
@@ -534,6 +564,7 @@ if __name__ == "__main__":
         logging.info("Saved model_with_feature_based_watermark.pth")
     elif args.watermark_method == "parameter_perturbation":
         from watermark_utils import verify_parameter_perturbation_watermark_relative
+
         verify_parameter_perturbation_watermark_relative(
             model=trained_model,
             original_params=original_param_values,

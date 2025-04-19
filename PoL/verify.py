@@ -93,12 +93,12 @@ def _check_init(d: Path, arch) -> bool:
     return ok
 
 # ───────── inner‑train silencer ─────────
-def _silent_train(lvl, **kw):
+def _silent_train(lvl, scheduler_type="step", **kw):  # NEW: Add scheduler_type parameter
     root = logging.getLogger()
     prev = root.level
     root.setLevel(lvl)
     try:
-        net, *_ = train(**kw)
+        net, *_ = train(scheduler_type=scheduler_type, **kw)  # NEW: Pass scheduler_type to train
     finally:
         root.setLevel(prev)
     return net
@@ -122,6 +122,7 @@ def verify_all(*, model_dir: Path, arch, order, thr, cfg, writer=None) -> bool:
             continue
         net = _silent_train(
             cfg["log_lvl"],
+            scheduler_type=cfg["scheduler_type"],  # NEW: Pass scheduler_type
             model_dir=str(model_dir / f"model_step_{c}"),
             sequence=seq[s:e],
             **cfg["train"]
@@ -165,6 +166,7 @@ def verify_topq(*, model_dir: Path, arch, order, q, epochs, cfg, writer=None, pr
             s, e = c * cfg["batch_size"], min(n * cfg["batch_size"], len(seq))
             net = _silent_train(
                 cfg["log_lvl"],
+                scheduler_type=cfg["scheduler_type"],  # NEW: Pass scheduler_type
                 model_dir=str(model_dir / f"model_step_{c}"),
                 sequence=seq[s:e],
                 **cfg["train"]
@@ -191,6 +193,12 @@ p.add_argument("--dist", nargs="+", default=["1", "2", "inf", "cos"])
 p.add_argument("--delta", nargs="+", type=float, default=[1e4, 100, 1, 0.1])
 p.add_argument("--q", type=int, default=0)
 p.add_argument("--watermark-path", default="model_with_watermark.pth")
+# NEW: Add scheduler argument
+p.add_argument("--scheduler", type=str, default="step", choices=["none", "step", "cosine"],
+               help="Learning rate scheduler type for inner training")
+# NEW: Add log-dir argument
+p.add_argument("--log-dir", type=str, default=None,
+               help="Directory for TensorBoard logs (if --log-tb is set)")
 p.add_argument("--augment", action="store_true")
 p.add_argument("--log-tb", action="store_true")
 p.add_argument("--verbose", action="store_true")
@@ -241,6 +249,7 @@ pol_ok = _check_init(out, arch) & _check_hash(out, args.dataset)
 cfg = dict(
     batch_size=args.batch_size,
     log_lvl=getattr(logging, args.train_log_level),
+    scheduler_type=args.scheduler,  # NEW: Add scheduler_type to cfg
     train=dict(
         lr=args.lr,
         batch_size=args.batch_size,
@@ -264,7 +273,9 @@ cfg = dict(
 writer = nullcontext()
 if args.log_tb:
     from torch.utils.tensorboard import SummaryWriter
-    writer = SummaryWriter(log_dir=out / "tb_verify")
+    # NEW: Use log_dir if provided, otherwise default to model_dir/tb_verify
+    tb_log_dir = args.log_dir if args.log_dir else (out / "tb_verify")
+    writer = SummaryWriter(log_dir=tb_log_dir)
 
 with writer as tb:
     if args.q > 0:
