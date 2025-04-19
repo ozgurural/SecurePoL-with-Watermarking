@@ -33,7 +33,8 @@ from watermark_utils import (                  # local watermark_utils.py
     WatermarkModule,
     embed_feature_watermark,
     generate_watermark_target,
-    verify_non_intrusive_watermark
+    verify_non_intrusive_watermark,
+    run_feature_based_watermark_verification,
 )
 
 # --------------------------------------------------------------------------- #
@@ -46,6 +47,7 @@ def _init_logging(save_dir: str | None):
     """
     handlers = [logging.StreamHandler()]
     if save_dir is not None:
+        os.makedirs(save_dir, exist_ok=True)
         handlers.append(logging.FileHandler(os.path.join(save_dir, "train.log")))
     logging.basicConfig(
         level=logging.INFO,
