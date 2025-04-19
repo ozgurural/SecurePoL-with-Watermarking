@@ -10,13 +10,11 @@ import torchvision.transforms as transforms
 from watermark_utils import WatermarkModule  # <-- PATCH: So we can instantiate WatermarkModule if needed.
 
 
-def get_parameters(net, numpy=False):
-    # Flatten the model's parameters as a single tensor
-    if type(net) is tuple:
-        net = net[0]
-    parameter = torch.cat([p.data.reshape([-1]) for p in list(net.parameters())])
-    return parameter.cpu().numpy() if numpy else parameter
-
+def get_parameters(net, numpy: bool = False):
+    """Flatten parameters to a *single 1‑D* tensor  (float32)."""
+    if isinstance(net, tuple): net = net[0]
+    vec = torch.cat([p.detach().flatten().float() for p in net.parameters()])
+    return vec.cpu().numpy() if numpy else vec
 
 def set_parameters(net, parameters, device):
     # Unflatten & load weights from a list of np arrays to a torch model
