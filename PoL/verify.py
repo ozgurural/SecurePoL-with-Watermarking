@@ -105,7 +105,7 @@ def _dist(a, b, order, arch): return utils.parameter_distance(a, b, order, archi
 # ─────────────────── Full verification across intervals ─────────────────── #
 def verify_all(*, model_dir, lr, batch_size, dataset, arch, order, threshold,
                k, randomize, watermark_key, watermark_method, num_parameters,
-               perturbation_strength, watermark_size, writer=None):
+               perturbation_strength, watermark_size, augment=False, writer=None):
     ck = sorted(int(f.split("_")[-1]) for f in glob.glob(f"{model_dir}/model_step_*"))
     seq = np.load(os.path.join(model_dir, "indices.npy"))
     order = order if isinstance(order, list) else [order];
@@ -114,7 +114,7 @@ def verify_all(*, model_dir, lr, batch_size, dataset, arch, order, threshold,
     for idx, (cur, nxt) in enumerate(zip(ck[:-1], ck[1:])):
         cur_p, fut_p = f"{model_dir}/model_step_{cur}", f"{model_dir}/model_step_{nxt}"
         s, e = cur * batch_size, min(nxt * batch_size, len(seq))
-        net, _ * _ = train(lr=lr, batch_size=batch_size, epochs=1, dataset=dataset,
+        net, _ * _ = train(lr=lr, batch_size=batch_size, epochs=1, dataset=dataset, augment=augment,
                            architecture=arch, model_dir=cur_p, sequence=seq[s:e],
                            half=0, lambda_wm=0., k=k, randomize=randomize,
                            watermark_key=watermark_key, watermark_method=watermark_method,
@@ -136,7 +136,7 @@ def verify_all(*, model_dir, lr, batch_size, dataset, arch, order, threshold,
 # ─────────────────────────── Top‑q verification ─────────────────────────── #
 def verify_topq(*, model_dir, lr, batch_size, dataset, arch, epochs, q, order,
                 k, randomize, watermark_key, watermark_method, num_parameters,
-                perturbation_strength, watermark_size, writer=None):
+                perturbation_strength, watermark_size, augment=False, writer=None):
     ck = sorted(int(f.split("_")[-1]) for f in glob.glob(f"{model_dir}/model_step_*"))
     seq = np.load(os.path.join(model_dir, "indices.npy"));
     per_ep = len(ck) // epochs
@@ -149,7 +149,7 @@ def verify_topq(*, model_dir, lr, batch_size, dataset, arch, epochs, q, order,
                  for i in range(st, en - 1)]
         for ind in np.argsort(local)[-q:]:
             c, n = ck[st + ind], ck[st + ind + 1]
-            net, _ * _ = train(lr=lr, batch_size=batch_size, epochs=1, dataset=dataset,
+            net, _ * _ = train(lr=lr, batch_size=batch_size, epochs=1, dataset=dataset, augment=augment,
                                architecture=arch, model_dir=f"{model_dir}/model_step_{c}",
                                sequence=seq[c * batch_size:n * batch_size], half=0, lambda_wm=0.,
                                k=k, randomize=randomize, watermark_key=watermark_key,
@@ -181,6 +181,8 @@ pa.add_argument("--q", type=int, default=0)
 pa.add_argument("--watermark-path", default="model_with_watermark.pth")
 pa.add_argument("--log-tb", action="store_true")
 pa.add_argument("--verbose", action="store_true")
+pa.add_argument("--augment", action="store_true", help="If set, replay training with CIFAR-style random crop+flip")
+
 args = pa.parse_args()
 
 out = args.model_dir;
@@ -212,7 +214,7 @@ with writer as tb:
                           randomize=args.randomize, watermark_key=args.watermark_key,
                           watermark_method=args.watermark_method, num_parameters=args.num_parameters,
                           perturbation_strength=args.perturbation_strength,
-                          watermark_size=args.watermark_size, writer=tb)
+                          watermark_size=args.watermark_size, writer=tb, augment=args.augment)
         _dump(rec, out, "verify_topq_metrics")
     else:
         rec = verify_all(model_dir=out, lr=args.lr, batch_size=args.batch_size, dataset=args.dataset,
@@ -220,7 +222,7 @@ with writer as tb:
                          randomize=args.randomize, watermark_key=args.watermark_key,
                          watermark_method=args.watermark_method, num_parameters=args.num_parameters,
                          perturbation_strength=args.perturbation_strength,
-                         watermark_size=args.watermark_size, writer=tb)
+                         watermark_size=args.watermark_size, writer=tb, augment=args.augment)
         _dump(rec, out, "verify_full_metrics")
 
 # ─────────────── final watermark presence test ──────────────── #
