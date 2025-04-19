@@ -114,7 +114,7 @@ def verify_all(*, model_dir, lr, batch_size, dataset, arch, order, threshold,
     for idx, (cur, nxt) in enumerate(zip(ck[:-1], ck[1:])):
         cur_p, fut_p = f"{model_dir}/model_step_{cur}", f"{model_dir}/model_step_{nxt}"
         s, e = cur * batch_size, min(nxt * batch_size, len(seq))
-        net, _ * _ = train(lr=lr, batch_size=batch_size, epochs=1, dataset=dataset, augment=augment,
+        net, *_ = train(lr=lr, batch_size=batch_size, epochs=1, dataset=dataset, augment=augment,
                            architecture=arch, model_dir=cur_p, sequence=seq[s:e],
                            half=0, lambda_wm=0., k=k, randomize=randomize,
                            watermark_key=watermark_key, watermark_method=watermark_method,
@@ -149,7 +149,7 @@ def verify_topq(*, model_dir, lr, batch_size, dataset, arch, epochs, q, order,
                  for i in range(st, en - 1)]
         for ind in np.argsort(local)[-q:]:
             c, n = ck[st + ind], ck[st + ind + 1]
-            net, _ * _ = train(lr=lr, batch_size=batch_size, epochs=1, dataset=dataset, augment=augment,
+            net, *_ = train(lr=lr, batch_size=batch_size, epochs=1, dataset=dataset, augment=augment,
                                architecture=arch, model_dir=f"{model_dir}/model_step_{c}",
                                sequence=seq[c * batch_size:n * batch_size], half=0, lambda_wm=0.,
                                k=k, randomize=randomize, watermark_key=watermark_key,
