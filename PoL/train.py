@@ -73,6 +73,7 @@ def train(
     epochs: int,
     dataset: str,
     architecture,
+    augment: bool = False,
     exp_id: str | None = None,
     model_dir: str | None = None,
     save_freq: int | None = None,
@@ -115,7 +116,7 @@ def train(
     #  1.  Dataset & sequence                                                 #
     # ----------------------------------------------------------------------- #
     logging.info("=== Loading Dataset ===")
-    trainset = utils.load_dataset(dataset, train=True, augment=False)
+    trainset = utils.load_dataset(dataset, train=True, augment=augment)
     full_train_size = len(trainset)
     logging.info(f"Dataset '{dataset}' loaded with {full_train_size} samples.")
 
@@ -472,6 +473,9 @@ if __name__ == "__main__":
     # NEW: TensorBoard flag
     parser.add_argument("--log-tb", action="store_true", help="Enable TensorBoard logging")
 
+    # NEW: data‑augmentation flag
+    parser.add_argument(+   "--augment", action = "store_true", help = "If set, apply CIFAR-style random crop+flip during training")
+
     args = parser.parse_args()
 
     # Re‑seed
@@ -514,6 +518,7 @@ if __name__ == "__main__":
         watermark_size=args.watermark_size,
         subset_size=args.subset_size,
         log_tb=args.log_tb,
+        augment=args.augment,
     )
 
     # ----- POST‑TRAINING WATERMARK CHECKS ---------------------------------- #
