@@ -1,11 +1,11 @@
 # utils.py
 
-import torch
 import numpy as np
-from scipy import stats
+import torch
 import torch.nn as nn
 import torchvision
 import torchvision.transforms as transforms
+from scipy import stats
 
 from watermark_utils import WatermarkModule  # <-- PATCH: So we can instantiate WatermarkModule if needed.
 
@@ -15,6 +15,7 @@ def get_parameters(net, numpy: bool = False):
     if isinstance(net, tuple): net = net[0]
     vec = torch.cat([p.detach().flatten().float() for p in net.parameters()])
     return vec.cpu().numpy() if numpy else vec
+
 
 def set_parameters(net, parameters, device):
     # Unflatten & load weights from a list of np arrays to a torch model

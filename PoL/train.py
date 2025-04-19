@@ -10,22 +10,22 @@
 
 import argparse
 import csv
+import hashlib
 import json
 import logging
 import os
 import random
 import time
-import hashlib
-from datetime import datetime
 from contextlib import nullcontext
+from datetime import datetime
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 
-import utils                                  # local utils.py
-from watermark_utils import (                  # local watermark_utils.py
+import utils  # local utils.py
+from watermark_utils import (  # local watermark_utils.py
     generate_watermark_pattern,
     select_parameters_to_perturb,
     apply_parameter_perturbations,
@@ -36,6 +36,7 @@ from watermark_utils import (                  # local watermark_utils.py
     verify_non_intrusive_watermark,
     run_feature_based_watermark_verification,
 )
+
 
 # --------------------------------------------------------------------------- #
 #                                LOGGING SETUP                                #
@@ -55,6 +56,7 @@ def _init_logging(save_dir: str | None):
         handlers=handlers,
     )
 
+
 # --------------------------------------------------------------------------- #
 #                          WEIGHT INITIALISATION                              #
 # --------------------------------------------------------------------------- #
@@ -63,36 +65,37 @@ def _weights_init(m):
     if isinstance(m, (nn.Linear, nn.Conv2d)):
         nn.init.kaiming_normal_(m.weight)
 
+
 # --------------------------------------------------------------------------- #
 #                                  TRAINING                                   #
 # --------------------------------------------------------------------------- #
 
 def train(
-    lr: float,
-    batch_size: int,
-    epochs: int,
-    dataset: str,
-    architecture,
-    augment: bool = False,
-    exp_id: str | None = None,
-    model_dir: str | None = None,
-    save_freq: int | None = None,
-    sequence=None,
-    num_gpu: int = torch.cuda.device_count(),
-    verify: bool = False,
-    dec_lr: list[int] | None = None,
-    half: bool = False,
-    resume: bool = False,
-    lambda_wm: float = 0.01,
-    k: int = 100,
-    randomize: bool = False,
-    watermark_key: str = "secret_key",
-    watermark_method: str = "feature_based",
-    num_parameters: int = 1000,
-    perturbation_strength: float = 1e-5,
-    watermark_size: int = 128,
-    subset_size: int | None = None,
-    log_tb: bool = False,                       # ----- NEW -----
+        lr: float,
+        batch_size: int,
+        epochs: int,
+        dataset: str,
+        architecture,
+        augment: bool = False,
+        exp_id: str | None = None,
+        model_dir: str | None = None,
+        save_freq: int | None = None,
+        sequence=None,
+        num_gpu: int = torch.cuda.device_count(),
+        verify: bool = False,
+        dec_lr: list[int] | None = None,
+        half: bool = False,
+        resume: bool = False,
+        lambda_wm: float = 0.01,
+        k: int = 100,
+        randomize: bool = False,
+        watermark_key: str = "secret_key",
+        watermark_method: str = "feature_based",
+        num_parameters: int = 1000,
+        perturbation_strength: float = 1e-5,
+        watermark_size: int = 128,
+        subset_size: int | None = None,
+        log_tb: bool = False,  # ----- NEW -----
 ):
     """
     Train a model and (optionally) embed a watermark.
@@ -250,7 +253,7 @@ def train(
     # ----------------------------------------------------------------------- #
     #  9.  Metric containers                                                  #
     # ----------------------------------------------------------------------- #
-    metrics = []                                    # list of dicts (one per epoch)
+    metrics = []  # list of dicts (one per epoch)
 
     # Helpers for CSV / JSON dump
     def _dump_metrics():
@@ -313,9 +316,11 @@ def train(
                 elif watermark_method == "feature_based":
                     feats_list = []
 
-                    def _hook(_, __, out): feats_list.append(out)
+                    def _hook(_, __, out):
+                        feats_list.append(out)
 
-                    handle = (net.module if isinstance(net, nn.DataParallel) else net).layer1.register_forward_hook(_hook)
+                    handle = (net.module if isinstance(net, nn.DataParallel) else net).layer1.register_forward_hook(
+                        _hook)
                     outputs = net(inputs)
                     handle.remove()
 
@@ -381,14 +386,14 @@ def train(
             # TensorBoard
             if log_tb:
                 tb_writer.add_scalar("Loss/train", train_loss, epoch + 1)
-                tb_writer.add_scalar("Loss/val",   val_loss,  epoch + 1)
-                tb_writer.add_scalar("Acc/val",    val_acc,   epoch + 1)
-                tb_writer.add_scalar("LR",         lr_cur,    epoch + 1)
+                tb_writer.add_scalar("Loss/val", val_loss, epoch + 1)
+                tb_writer.add_scalar("Acc/val", val_acc, epoch + 1)
+                tb_writer.add_scalar("LR", lr_cur, epoch + 1)
 
             logging.info(
-                f"[Epoch {epoch+1:3d}/{epochs}] "
+                f"[Epoch {epoch + 1:3d}/{epochs}] "
                 f"train_loss={train_loss:.4f} | val_loss={val_loss:.4f} | "
-                f"val_acc={val_acc*100:5.2f}% | lr={lr_cur:.4f}"
+                f"val_acc={val_acc * 100:5.2f}% | lr={lr_cur:.4f}"
             )
 
     # ----------------------------------------------------------------------- #
@@ -399,6 +404,7 @@ def train(
 
     logging.info("=== Training Completed ===")
     return net, optimizer, criterion, original_param_values
+
 
 # --------------------------------------------------------------------------- #
 #                               VALIDATION                                    #
@@ -436,6 +442,7 @@ def validate(dataset, model, criterion, batch_size: int = 128):
     val_acc = correct / total
     return val_loss, val_acc
 
+
 # --------------------------------------------------------------------------- #
 #                            ARGPARSE INTERFACE                               #
 # --------------------------------------------------------------------------- #
@@ -448,7 +455,7 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=20)
     parser.add_argument("--dataset", type=str, default="CIFAR10")
     parser.add_argument("--model", type=str, default="resnet20")
-    parser.add_argument("--id",    type=str, default="Run")
+    parser.add_argument("--id", type=str, default="Run")
     parser.add_argument("--save-freq", type=int, default=100)
     parser.add_argument("--num-gpu", type=int, default=torch.cuda.device_count())
     parser.add_argument("--milestone", nargs="+", type=int, default=None)
@@ -474,7 +481,8 @@ if __name__ == "__main__":
     parser.add_argument("--log-tb", action="store_true", help="Enable TensorBoard logging")
 
     # NEW: data‑augmentation flag
-    parser.add_argument(+   "--augment", action = "store_true", help = "If set, apply CIFAR-style random crop+flip during training")
+    parser.add_argument("--augment", action="store_true",
+                        help="If set, apply CIFAR-style random crop+flip during training")
 
     args = parser.parse_args()
 
@@ -491,9 +499,11 @@ if __name__ == "__main__":
     # Resolve architecture
     try:
         import model as custom_models
+
         architecture = getattr(custom_models, args.model)
     except AttributeError:
         import torchvision.models as tv_models
+
         architecture = getattr(tv_models, args.model)
 
     # ----- TRAIN ----------------------------------------------------------- #
@@ -527,6 +537,7 @@ if __name__ == "__main__":
         run_feature_based_watermark_verification(trained_model, device, args.watermark_key)
     elif args.watermark_method == "parameter_perturbation":
         from watermark_utils import verify_parameter_perturbation_watermark_relative
+
         verify_parameter_perturbation_watermark_relative(
             model=trained_model,
             original_params=original_param_values,
@@ -541,6 +552,6 @@ if __name__ == "__main__":
 
     # ----- FINAL VALIDATION ------------------------------------------------ #
     final_val_loss, final_val_acc = validate(args.dataset, trained_model, criterion)
-    logging.info(f"Final Validation Acc: {final_val_acc*100:.2f}% | Val Loss: {final_val_loss:.4f}")
+    logging.info(f"Final Validation Acc: {final_val_acc * 100:.2f}% | Val Loss: {final_val_loss:.4f}")
 
     logging.info(f"Total wall‑clock time: {time.time() - t0:.1f}s")
