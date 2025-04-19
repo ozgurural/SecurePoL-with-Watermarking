@@ -33,8 +33,7 @@ from watermark_utils import (                  # local watermark_utils.py
     WatermarkModule,
     embed_feature_watermark,
     generate_watermark_target,
-    verify_non_intrusive_watermark,
-    run_feature_based_watermark_verification,
+    verify_non_intrusive_watermark
 )
 
 # --------------------------------------------------------------------------- #

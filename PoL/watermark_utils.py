@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # watermark_utils.py  – reusable helpers for the Secure‑PoL project
+
 from __future__ import annotations
 import logging
 import hashlib
@@ -21,7 +22,10 @@ def _np_rng(key: Union[str, int]) -> np.random.Generator:
     seed = int(hashlib.sha256(str(key).encode()).hexdigest(), 16) % 2**32
     return np.random.default_rng(seed)
 
-def _torch_rng(key: Union[str, int], device: Union[torch.device, str] = "cpu") -> torch.Generator:
+def _torch_rng(
+    key: Union[str, int],
+    device: Union[torch.device, str] = "cpu"
+) -> torch.Generator:
     g = torch.Generator(device=device)
     seed = int(hashlib.sha256(str(key).encode()).hexdigest(), 16) % 2**32
     g.manual_seed(seed)
@@ -35,17 +39,19 @@ def generate_watermark_pattern(wm_key: str, length: int) -> np.ndarray:
     return _np_rng(wm_key).integers(0, 2, size=length, dtype=np.int8)
 
 def select_parameters_to_perturb(
-    model: nn.Module, num_params: int, wm_key: str
+    model: nn.Module,
+    num_params: int,
+    wm_key: str
 ) -> List[Tuple[str, nn.Parameter]]:
     """Pick *num_params* trainable, non‑BN parameters – deterministic."""
     params = [
         (n, p) for n, p in model.named_parameters()
-        if p.requires_grad and not any(tag in n.lower() for tag in ("bn", "running_mean", "running_var"))
+        if p.requires_grad
+        and not any(tag in n.lower() for tag in ("bn", "running_mean", "running_var"))
     ]
     if num_params > len(params):
         raise ValueError(f"num_params={num_params} exceeds available trainables ({len(params)})")
 
-    # sort to ensure stable order across Python versions
     params.sort(key=lambda x: x[0])
     idxs = _np_rng(wm_key + "_param_select").choice(len(params), size=num_params, replace=False)
     return [params[i] for i in idxs]
@@ -92,11 +98,55 @@ def embed_feature_watermark(
     wm_key: str,
     step: int
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Return (desired_feats, mask) for MSE penalty."""
+    """Return (desired_feats, mask) for MSE penalty during training."""
     rng = _torch_rng(f"{wm_key}_{step}", feats.device)
-    mask = (torch.rand_like(feats, generator=rng) < 0.01).float()
+    mask  = (torch.rand_like(feats, generator=rng) < 0.01).float()
     noise = torch.randn_like(feats, generator=rng) * 0.01
     return feats + mask * noise, mask
+
+# ---------- verification helpers for feature‑based watermark ---------- #
+def extract_features(
+    model: nn.Module,
+    inputs: torch.Tensor,
+    layer_name: str = "layer1"
+) -> torch.Tensor:
+    """Hook into *layer_name* and return its raw activations."""
+    buf = []
+    h = dict(model.named_modules())[layer_name].register_forward_hook(
+        lambda _, __, out: buf.append(out)
+    )
+    with torch.no_grad():
+        model(inputs)
+    h.remove()
+    return buf[0]
+
+def check_feature_watermark(
+    feats: torch.Tensor,
+    threshold: float = 0.01
+) -> bool:
+    """Simple mean‑threshold check on a feature tensor."""
+    return feats.mean().item() > threshold
+
+def run_feature_based_watermark_verification(
+    model: nn.Module,
+    wm_key: str = "key",
+    device: Union[torch.device, str] = "cpu",
+    layer_name: str = "layer1",
+    threshold: float = 0.01
+) -> bool:
+    """
+    Prepare WM inputs, extract features at *layer_name*, and
+    return True iff mean(feature) > threshold.
+    """
+    model.to(device).eval()
+    wm_inputs = prepare_watermark_data(device, wm_key)
+    feats = extract_features(model, wm_inputs, layer_name)
+    ok = check_feature_watermark(feats, threshold)
+    logging.info(
+        "Feature‑based WM %s  (mean %.4f vs thr %.4f)",
+        "✓" if ok else "✗", feats.mean().item(), threshold
+    )
+    return ok
 
 # ------------------------------------------------------------------ #
 #                       non‑intrusive option B                       #
@@ -122,9 +172,9 @@ class WatermarkModule(nn.Module):
     """Wrap a CIFAR‑10 classifier to output a hidden vector when *trigger*=True."""
     def __init__(self, base: nn.Module, wm_key: str, wm_size: int = 128) -> None:
         super().__init__()
-        self.base = base
-        self.fc = nn.Linear(10, wm_size)
-        self.wm_key = wm_key
+        self.base    = base
+        self.fc      = nn.Linear(10, wm_size)
+        self.wm_key  = wm_key
         self.wm_size = wm_size
 
     def forward(self, x: torch.Tensor, *, trigger: bool = False) -> torch.Tensor:
@@ -163,9 +213,8 @@ def verify_parameter_perturbation_watermark_relative(
     tol: float = 1e-3,
 ) -> bool:
     """
-    Compare **all** trainable parameters against originals + expected ±strength.
+    Compare all trainable parameters against originals + expected ±strength.
     """
-    # stable sort by name
     cand = sorted(
         ((n, p.detach().cpu().numpy()) for n, p in model.named_parameters() if p.requires_grad),
         key=lambda t: t[0],
@@ -188,8 +237,10 @@ __all__ = [
     # RNG helpers
     "generate_watermark_pattern", "select_parameters_to_perturb",
     "apply_parameter_perturbations", "should_embed_watermark",
-    # feature option
+    # feature‑based watermark
     "prepare_watermark_data", "embed_feature_watermark",
+    # feature‑WM verification
+    "extract_features", "check_feature_watermark", "run_feature_based_watermark_verification",
     # non‑intrusive option
     "WatermarkModule", "generate_trigger_inputs", "generate_watermark_target",
     "verify_non_intrusive_watermark",
