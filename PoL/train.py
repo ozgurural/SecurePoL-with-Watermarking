@@ -37,7 +37,6 @@ from watermark_utils import (  # local watermark_utils.py
     run_feature_based_watermark_verification,
 )
 
-
 # --------------------------------------------------------------------------- #
 #                                LOGGING SETUP                                #
 # --------------------------------------------------------------------------- #
@@ -56,7 +55,6 @@ def _init_logging(save_dir: str | None):
         handlers=handlers,
     )
 
-
 # --------------------------------------------------------------------------- #
 #                          WEIGHT INITIALISATION                              #
 # --------------------------------------------------------------------------- #
@@ -64,7 +62,6 @@ def _init_logging(save_dir: str | None):
 def _weights_init(m):
     if isinstance(m, (nn.Linear, nn.Conv2d)):
         nn.init.kaiming_normal_(m.weight)
-
 
 # --------------------------------------------------------------------------- #
 #                                  TRAINING                                   #
@@ -95,7 +92,7 @@ def train(
         perturbation_strength: float = 1e-5,
         watermark_size: int = 128,
         subset_size: int | None = None,
-        log_tb: bool = False,  # ----- NEW -----
+        log_tb: bool = False,
 ):
     """
     Train a model and (optionally) embed a watermark.
@@ -201,7 +198,7 @@ def train(
     torch.backends.cudnn.benchmark = False
 
     # ----------------------------------------------------------------------- #
-    #  6.  PoL artefacts / checkpoint dir                                     #
+    #  6.  PoL artefacts / checkpoint dir                                     #
     # ----------------------------------------------------------------------- #
     if save_dir:
         os.makedirs(save_dir, exist_ok=True)
@@ -319,8 +316,7 @@ def train(
                     def _hook(_, __, out):
                         feats_list.append(out)
 
-                    handle = (net.module if isinstance(net, nn.DataParallel) else net).layer1.register_forward_hook(
-                        _hook)
+                    handle = (net.module if isinstance(net, nn.DataParallel) else net).layer1.register_forward_hook(_hook)
                     outputs = net(inputs)
                     handle.remove()
 
@@ -405,7 +401,6 @@ def train(
     logging.info("=== Training Completed ===")
     return net, optimizer, criterion, original_param_values
 
-
 # --------------------------------------------------------------------------- #
 #                               VALIDATION                                    #
 # --------------------------------------------------------------------------- #
@@ -442,13 +437,12 @@ def validate(dataset, model, criterion, batch_size: int = 128):
     val_acc = correct / total
     return val_loss, val_acc
 
-
 # --------------------------------------------------------------------------- #
 #                            ARGPARSE INTERFACE                               #
 # --------------------------------------------------------------------------- #
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser("PoL Training with optional watermarking + metrics logging")
+    parser = argparse.ArgumentParser("PoL Training with optional watermarking + metrics logging")
     # Basic
     parser.add_argument("--batch-size", type=int, default=128)
     parser.add_argument("--lr", type=float, default=0.1)
@@ -499,11 +493,9 @@ if __name__ == "__main__":
     # Resolve architecture
     try:
         import model as custom_models
-
         architecture = getattr(custom_models, args.model)
     except AttributeError:
         import torchvision.models as tv_models
-
         architecture = getattr(tv_models, args.model)
 
     # ----- TRAIN ----------------------------------------------------------- #
@@ -531,13 +523,17 @@ if __name__ == "__main__":
         augment=args.augment,
     )
 
-    # ----- POST‑TRAINING WATERMARK CHECKS ---------------------------------- #
+    # ----- POST‑TRAINING WATERMARK CHECKS AND MODEL SAVING ----------------- #
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    if args.watermark_method == "feature_based":
+    if args.watermark_method == "none":
+        logging.info("No watermark used; baseline PoL.")
+        torch.save(trained_model.state_dict(), 'model_baseline_no_watermark.pth')
+    elif args.watermark_method == "feature_based":
         run_feature_based_watermark_verification(trained_model, device, args.watermark_key)
+        torch.save(trained_model.state_dict(), 'model_with_feature_based_watermark.pth')
+        logging.info("Saved model_with_feature_based_watermark.pth")
     elif args.watermark_method == "parameter_perturbation":
         from watermark_utils import verify_parameter_perturbation_watermark_relative
-
         verify_parameter_perturbation_watermark_relative(
             model=trained_model,
             original_params=original_param_values,
@@ -545,10 +541,18 @@ if __name__ == "__main__":
             perturbation_strength=args.perturbation_strength,
             tolerance=1e-1,
         )
+        final_ckpt = {
+            'net': trained_model.state_dict(),
+            'original_param_values': original_param_values
+        }
+        torch.save(final_ckpt, 'model_with_parameter_perturbation_watermark.pth')
+        logging.info("Saved model_with_parameter_perturbation_watermark.pth")
     elif args.watermark_method == "non_intrusive":
         verify_non_intrusive_watermark(
             trained_model, device, args.watermark_key, args.watermark_size, args.tolerance_wm
         )
+        torch.save(trained_model.state_dict(), 'model_with_non_intrusive_watermark.pth')
+        logging.info("Saved model_with_non_intrusive_watermark.pth")
 
     # ----- FINAL VALIDATION ------------------------------------------------ #
     final_val_loss, final_val_acc = validate(args.dataset, trained_model, criterion)

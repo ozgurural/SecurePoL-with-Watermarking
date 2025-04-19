@@ -3,7 +3,7 @@
 Lightweight model zoo for Secure‑PoL‑Watermarking experiments
 -------------------------------------------------------------
 • CIFAR‑10 ResNets (resnet20 … resnet1202)
-• CIFAR‑100 / ImageNet‑style ResNets (resnet18 … resnet152)
+• CIFAR‑100 / ImageNet‑style ResNets (resnet18 … resnet152)
 • Two toy CNNs (SimpleCNN / SimpleConv)
 
 All sub‑modules are initialised with Kaiming‑normal weights **after**
@@ -23,7 +23,6 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s",
 )
 
-
 # --------------------------------------------------------------------- #
 #                    generic weight initialiser                         #
 # --------------------------------------------------------------------- #
@@ -35,7 +34,6 @@ def _weights_init(m: nn.Module) -> None:
             bound = 1 / fan_in ** 0.5
             init.uniform_(m.bias, -bound, bound)
         logging.debug("Init %s", m.__class__.__name__)
-
 
 # --------------------------------------------------------------------- #
 #                          simple CNNs                                  #
@@ -59,7 +57,6 @@ class SimpleCNN(nn.Module):
         x = F.relu(self.fc2(x))
         return self.fc3(x)
 
-
 class SimpleConv(nn.Module):
     def __init__(self) -> None:
         super().__init__()
@@ -77,15 +74,13 @@ class SimpleConv(nn.Module):
         x = F.relu(self.fc1(x))
         return self.fc2(x)
 
-
 # --------------------------------------------------------------------- #
-#                    CIFAR‑10 narrow ResNet (He et al.)                 #
+#                    CIFAR‑10 narrow ResNet (He et al.)                 #
 # --------------------------------------------------------------------- #
 class LambdaLayer(nn.Module):
     def __init__(self, lambd): super().__init__(); self.lambd = lambd
 
     def forward(self, x): return self.lambd(x)
-
 
 class BasicBlock(nn.Module):
     expansion = 1
@@ -116,7 +111,6 @@ class BasicBlock(nn.Module):
         out = self.bn2(self.conv2(out))
         return F.relu(out + self.shortcut(x))
 
-
 class ResNet(nn.Module):
     def __init__(self, block, layers, num_classes=10):
         super().__init__()
@@ -137,33 +131,21 @@ class ResNet(nn.Module):
 
     def forward(self, x):
         x = F.relu(self.bn1(self.conv1(x)))
-        x = self.layer1(x);
-        x = self.layer2(x);
+        x = self.layer1(x)
+        x = self.layer2(x)
         x = self.layer3(x)
         x = F.avg_pool2d(x, x.size(3)).view(x.size(0), -1)
         return self.fc(x)
 
-
 def resnet20():   return ResNet(BasicBlock, [3, 3, 3])
-
-
 def resnet32():   return ResNet(BasicBlock, [5, 5, 5])
-
-
 def resnet44():   return ResNet(BasicBlock, [7, 7, 7])
-
-
 def resnet56():   return ResNet(BasicBlock, [9, 9, 9])
-
-
 def resnet110():  return ResNet(BasicBlock, [18, 18, 18])
-
-
 def resnet1202(): return ResNet(BasicBlock, [200, 200, 200])
 
-
 # --------------------------------------------------------------------- #
-#              Wide/Deep ResNet for CIFAR‑100 / ImageNet                #
+#              Wide/Deep ResNet for CIFAR‑100 / ImageNet                #
 # --------------------------------------------------------------------- #
 class BasicBlock2(nn.Module):
     expansion = 1
@@ -187,7 +169,6 @@ class BasicBlock2(nn.Module):
 
     def forward(self, x): return F.relu(self.res(x) + self.short(x))
 
-
 class BottleNeck2(nn.Module):
     expansion = 4
 
@@ -208,7 +189,6 @@ class BottleNeck2(nn.Module):
         self.apply(_weights_init)
 
     def forward(self, x): return F.relu(self.res(x) + self.short(x))
-
 
 class ResNet2(nn.Module):
     def __init__(self, block, layers, num_classes=100):
@@ -234,29 +214,19 @@ class ResNet2(nn.Module):
 
     def forward(self, x):
         x = self.stem(x)
-        x = self.stage1(x);
+        x = self.stage1(x)
         x = self.stage2(x)
-        x = self.stage3(x);
+        x = self.stage3(x)
         x = self.stage4(x)
         x = self.avg(x).flatten(1)
         return self.fc(x)
 
-
-# wide family (CIFAR‑100 default num_classes=100)
+# Wide family (CIFAR‑100 default num_classes=100)
 def resnet18():  return ResNet2(BasicBlock2, [2, 2, 2, 2])
-
-
 def resnet34():  return ResNet2(BasicBlock2, [3, 4, 6, 3])
-
-
 def resnet50():  return ResNet2(BottleNeck2, [3, 4, 6, 3])
-
-
 def resnet101(): return ResNet2(BottleNeck2, [3, 4, 23, 3])
-
-
 def resnet152(): return ResNet2(BottleNeck2, [3, 8, 36, 3])
-
 
 # --------------------------------------------------------------------- #
 __all__ = [n for n in globals() if n.startswith("resnet")] + [
