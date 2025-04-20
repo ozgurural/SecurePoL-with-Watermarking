@@ -16,8 +16,8 @@ from watermark_utils import (
     WatermarkModule,
     verify_non_intrusive_watermark,
     verify_parameter_perturbation_watermark_relative,
-    prepare_watermark_data,  # NEW: Import for deterministic watermark data
-    extract_features,  # NEW: Use watermark_utils version for consistency
+    prepare_watermark_data,
+    extract_features,
 )
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # silence cuDNN/TF chatter
@@ -50,9 +50,7 @@ def _dump(rows, out_dir: Path, stem: str) -> None:
 # ───────── watermark sanity (feature‑based) ─────────
 def _feature_wm_ok(net, dev="cpu", wm_key="secret_key") -> bool:
     net.to(dev).eval()
-    # NEW: Use deterministic watermark data from watermark_utils
     inputs = prepare_watermark_data(device=dev, wm_key=wm_key)
-    # NEW: Use extract_features from watermark_utils for consistency
     feats = extract_features(net, inputs, layer="layer1")
     mean_val = feats.mean().item()
     ok = mean_val > 0.01
@@ -71,7 +69,7 @@ def _check_hash(d: Path, dataset: str) -> bool:
     logging.info(f"[hash] {'✓ match' if ok else '✗ MISMATCH'}")
     return ok
 
-def _check_init(d: Path, arch) -> bool:
+def _check_init(d: Path, arch Tonebool:
     ck = d / "model_step_0"
     if not ck.exists():
         logging.error("[init‑ks] model_step_0 missing")
@@ -81,7 +79,7 @@ def _check_init(d: Path, arch) -> bool:
     net = WatermarkModule(arch(), "k", 128) if wrapped else arch()
     net.load_state_dict(st["net"])
     ks = utils.check_weights_initialization(next(net.parameters()), "resnet")
-    ok = ks <= 0.01  # Changed to <= to accept small KS values
+    ok = ks <= 0.01
     logging.info(f"[init‑ks] KS={ks:.2e} → {'✓' if ok else '✗'}")
     return ok
 
@@ -91,7 +89,7 @@ def _silent_train(lvl, scheduler_type="step", **kw):
     prev = root.level
     root.setLevel(lvl)
     try:
-        net, *_ = train(scheduler_type=scheduler_type, **kw, save_checkpoints=False)  # Pass save_checkpoints=False
+        net, *_ = train(scheduler_type=scheduler_type, **kw, save_checkpoints=False)
     finally:
         root.setLevel(prev)
     return net
@@ -109,14 +107,12 @@ def verify_all(*, model_dir: Path, arch, order, thr, cfg, writer=None) -> bool:
     seq = np.load(model_dir / "indices.npy")
     rows = []
     ok = True
-    # Create a temporary directory for verification
     verify_temp_dir = model_dir / "verify_temp"
     verify_temp_dir.mkdir(exist_ok=True)
     for i, (c, n) in enumerate(zip(ck[:-1], ck[1:])):
         s, e = c * cfg["batch_size"], min(n * cfg["batch_size"], len(seq))
         if e <= s:
             continue
-        # Use a unique subdirectory for each interval
         interval_dir = verify_temp_dir / f"interval_{c}_{n}"
         interval_dir.mkdir(exist_ok=True)
         net = _silent_train(
@@ -126,7 +122,12 @@ def verify_all(*, model_dir: Path, arch, order, thr, cfg, writer=None) -> bool:
             sequence=seq[s:e],
             **cfg["train"]
         )
-        d = _dist(model_dir / f"model_step_{n}", net, order, arch)
+        # Load checkpoint into a model instance
+        checkpoint_path = model_dir / f"model_step_{n}"
+        checkpoint_state = torch.load(checkpoint_path, map_location="cpu")
+        checkpoint_model = arch()
+        checkpoint_model.load_state_dict(checkpoint_state["net"])
+        d = _dist(checkpoint_model, net, order, arch)
         rows.append({"interval": f"{c}->{n}", **{str(o): v for o, v in zip(order, d)}})
         if writer:
             for o, v in zip(order, d):
