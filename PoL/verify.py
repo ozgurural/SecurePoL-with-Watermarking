@@ -228,7 +228,7 @@ def verify_all(*, model_dir: Path, arch, order, thr, cfg, writer=None) -> bool:
 # ───────── top‑q verifier ─────────
 def verify_topq(*, model_dir: Path, arch, order, q, epochs, cfg, writer=None, precompute=True) -> bool:
     """
-    Verify the top-q intervals with the largest parameter distances.
+    Verify the top-q intervals with the largest parameter distances, skipping invalid intervals.
 
     Args:
         model_dir: Directory containing model checkpoints.
@@ -250,22 +250,35 @@ def verify_topq(*, model_dir: Path, arch, order, q, epochs, cfg, writer=None, pr
     seq = np.load(model_dir / "indices.npy")
     per = max(1, len(ck) // epochs)
     rows = []
+
     for ep in range(epochs):
         st, en = ep * per, min((ep + 1) * per, len(ck) - 1)
-        if precompute:
-            local = [
-                _dist(model_dir / f"model_step_{ck[i]}", model_dir / f"model_step_{ck[i+1]}", order, arch)[0]
-                for i in range(st, en)
-            ]
-            top_indices = np.argsort(local)[-q:]
-        else:
-            top_indices = range(max(0, en - st - q), en - st)
-        for ind in top_indices:
-            c, n = ck[st + ind], ck[st + ind + 1]
+        valid_intervals = []
+        distances = []
+
+        # Filter valid intervals and compute distances
+        for i in range(st, en):
+            c, n = ck[i], ck[i + 1]
             s, e = c * cfg["batch_size"], min(n * cfg["batch_size"], len(seq))
-            if s >= e:
-                logging.warning(f"Skipping interval {c}->{n} due to empty sequence slice")
-                continue
+            if s < e:  # Ensure non-empty slice
+                valid_intervals.append((c, n))
+                dist = _dist(model_dir / f"model_step_{c}", model_dir / f"model_step_{n}", order, arch)[0]
+                distances.append(dist)
+
+        if not valid_intervals:
+            logging.warning(f"No valid intervals for epoch {ep}")
+            continue
+
+        # Select top-q intervals from valid ones
+        if precompute:
+            top_indices = np.argsort(distances)[-q:]
+        else:
+            top_indices = range(max(0, len(valid_intervals) - q), len(valid_intervals))
+
+        # Retrain and verify selected intervals
+        for idx in top_indices:
+            c, n = valid_intervals[idx]
+            s, e = c * cfg["batch_size"], min(n * cfg["batch_size"], len(seq))
             net = _silent_train(
                 cfg["log_lvl"],
                 scheduler_type=cfg["scheduler_type"],
@@ -277,6 +290,7 @@ def verify_topq(*, model_dir: Path, arch, order, q, epochs, cfg, writer=None, pr
             rows.append({"interval": f"{c}->{n}", str(order[0]): d})
             if writer:
                 writer.add_scalar(f"topq_dist_{order[0]}", d, len(rows))
+
     _dump(rows, model_dir, "verify_topq_metrics")
     return bool(rows)
 
