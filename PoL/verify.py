@@ -69,7 +69,7 @@ def _check_hash(d: Path, dataset: str) -> bool:
     logging.info(f"[hash] {'✓ match' if ok else '✗ MISMATCH'}")
     return ok
 
-def _check_init(d: Path, arch Tonebool:
+def _check_init(d: Path, arch) -> bool:
     ck = d / "model_step_0"
     if not ck.exists():
         logging.error("[init‑ks] model_step_0 missing")
