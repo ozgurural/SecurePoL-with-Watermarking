@@ -7,7 +7,7 @@ from __future__ import annotations
 import os, sys, argparse, csv, glob, hashlib, json, logging, random, textwrap
 from pathlib import Path
 from contextlib import nullcontext
-from typing import List
+from typing import List, Optional
 
 import numpy as np, torch
 import utils, model as custom_model
@@ -23,7 +23,14 @@ from watermark_utils import (
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # silence cuDNN/TF chatter
 
 # ───────────────────────── logging ──────────────────────────
-def _init_logging(out_dir: Path | None, verbose: bool) -> None:
+def _init_logging(out_dir: Optional[Path], verbose: bool) -> None:
+    """
+    Initialize logging configuration.
+
+    Args:
+        out_dir: Output directory for log file, or None to log only to console.
+        verbose: If True, set logging level to DEBUG; otherwise, INFO.
+    """
     lvl = logging.DEBUG if verbose else logging.INFO
     h: List[logging.Handler] = [logging.StreamHandler()]
     if out_dir:
@@ -36,7 +43,15 @@ def _init_logging(out_dir: Path | None, verbose: bool) -> None:
     )
 
 # ─────────────────────── I/O helpers ────────────────────────
-def _dump(rows, out_dir: Path, stem: str) -> None:
+def _dump(rows: List[dict], out_dir: Path, stem: str) -> None:
+    """
+    Dump verification results to CSV and JSON files.
+
+    Args:
+        rows: List of dictionaries containing verification metrics.
+        out_dir: Directory to save the output files.
+        stem: Stem for the output file names.
+    """
     if not rows:
         return
     csv_p, js_p = out_dir / f"{stem}.csv", out_dir / f"{stem}.json"
@@ -45,10 +60,21 @@ def _dump(rows, out_dir: Path, stem: str) -> None:
         w.writeheader()
         w.writerows(rows)
     js_p.write_text(json.dumps(rows, indent=2))
-    logging.info(f"[export] {csv_p}")  # Log the absolute path
+    logging.info(f"[export] {csv_p}")
 
 # ───────── watermark sanity (feature‑based) ─────────
 def _feature_wm_ok(net, dev="cpu", wm_key="secret_key") -> bool:
+    """
+    Check if the feature-based watermark is present in the model.
+
+    Args:
+        net: PyTorch model to check.
+        dev: Device to use for computations (default: "cpu").
+        wm_key: Watermark key (default: "secret_key").
+
+    Returns:
+        True if the watermark is detected, False otherwise.
+    """
     net.to(dev).eval()
     inputs = prepare_watermark_data(device=dev, wm_key=wm_key)
     feats = extract_features(net, inputs, layer="layer1")
@@ -59,6 +85,16 @@ def _feature_wm_ok(net, dev="cpu", wm_key="secret_key") -> bool:
 
 # ───────── integrity checks ─────────
 def _check_hash(d: Path, dataset: str) -> bool:
+    """
+    Verify the dataset hash to ensure consistency.
+
+    Args:
+        d: Directory containing indices.npy and hash.txt.
+        dataset: Name of the dataset.
+
+    Returns:
+        True if the hash matches, False otherwise.
+    """
     idx, hfile = d / "indices.npy", d / "hash.txt"
     if not (idx.exists() and hfile.exists()):
         logging.error("[hash] indices.npy or hash.txt missing")
@@ -70,6 +106,16 @@ def _check_hash(d: Path, dataset: str) -> bool:
     return ok
 
 def _check_init(d: Path, arch) -> bool:
+    """
+    Verify the initial model weights using the Kolmogorov-Smirnov test.
+
+    Args:
+        d: Directory containing model_step_0 checkpoint.
+        arch: Model architecture.
+
+    Returns:
+        True if the initialization is correct, False otherwise.
+    """
     ck = d / "model_step_0"
     if not ck.exists():
         logging.error("[init‑ks] model_step_0 missing")
@@ -85,6 +131,17 @@ def _check_init(d: Path, arch) -> bool:
 
 # ───────── inner‑train silencer ─────────
 def _silent_train(lvl, scheduler_type="step", **kw):
+    """
+    Train the model with logging silenced.
+
+    Args:
+        lvl: Logging level to set during training.
+        scheduler_type: Type of scheduler to use.
+        **kw: Additional keyword arguments for training.
+
+    Returns:
+        The trained model.
+    """
     root = logging.getLogger()
     prev = root.level
     root.setLevel(lvl)
@@ -96,10 +153,36 @@ def _silent_train(lvl, scheduler_type="step", **kw):
 
 # ───────── distance helper ─────────
 def _dist(a, b, order, arch):
+    """
+    Compute parameter distance between two models.
+
+    Args:
+        a: First model or checkpoint.
+        b: Second model or checkpoint.
+        order: Distance metric(s) to use.
+        arch: Model architecture.
+
+    Returns:
+        List of distances for each metric.
+    """
     return utils.parameter_distance(a, b, order, architecture=arch, half=0)
 
 # ───────── full‑chain verifier ─────────
 def verify_all(*, model_dir: Path, arch, order, thr, cfg, writer=None) -> bool:
+    """
+    Verify the full training chain by retraining and comparing checkpoints.
+
+    Args:
+        model_dir: Directory containing model checkpoints.
+        arch: Model architecture.
+        order: List of distance metrics to use.
+        thr: Thresholds for each distance metric.
+        cfg: Configuration dictionary.
+        writer: TensorBoard writer (optional).
+
+    Returns:
+        True if all checks pass, False otherwise.
+    """
     ck = sorted(int(Path(p).stem.split("_")[-1]) for p in glob.glob(str(model_dir / "model_step_*")))
     if len(ck) < 2:
         logging.error("no checkpoints → PoL invalid")
@@ -122,7 +205,6 @@ def verify_all(*, model_dir: Path, arch, order, thr, cfg, writer=None) -> bool:
             sequence=seq[s:e],
             **cfg["train"]
         )
-        # Load checkpoint into a model instance
         checkpoint_path = model_dir / f"model_step_{n}"
         checkpoint_state = torch.load(checkpoint_path, map_location="cpu")
         checkpoint_model = arch()
@@ -144,6 +226,22 @@ def verify_all(*, model_dir: Path, arch, order, thr, cfg, writer=None) -> bool:
 
 # ───────── top‑q verifier ─────────
 def verify_topq(*, model_dir: Path, arch, order, q, epochs, cfg, writer=None, precompute=True) -> bool:
+    """
+    Verify the top-q intervals with the largest parameter distances.
+
+    Args:
+        model_dir: Directory containing model checkpoints.
+        arch: Model architecture.
+        order: List of distance metrics to use.
+        q: Number of top intervals to verify.
+        epochs: Number of epochs.
+        cfg: Configuration dictionary.
+        writer: TensorBoard writer (optional).
+        precompute: If True, precompute distances for top-q selection.
+
+    Returns:
+        True if verification is successful, False otherwise.
+    """
     ck = sorted(int(Path(p).stem.split("_")[-1]) for p in glob.glob(str(model_dir / "model_step_*")))
     if len(ck) < 2:
         logging.error("no checkpoints → PoL invalid")
@@ -183,23 +281,21 @@ p = argparse.ArgumentParser(
     formatter_class=argparse.RawTextHelpFormatter,
     description="Strict PoL & watermark verifier"
 )
-p.add_argument("--model-dir", required=True)
-p.add_argument("--dataset", default="CIFAR10")
-p.add_argument("--model", default="resnet20")
-p.add_argument("--batch-size", type=int, default=128)
-p.add_argument("--lr", type=float, default=0.1)
-p.add_argument("--epochs", type=int, default=2)
-p.add_argument("--dist", nargs="+", default=["1", "2", "inf", "cos"])
-p.add_argument("--delta", nargs="+", type=float, default=[1e4, 100, 1, 0.1])
-p.add_argument("--q", type=int, default=0)
-p.add_argument("--watermark-path", default="model_with_watermark.pth")
-p.add_argument("--scheduler", type=str, default="step", choices=["none", "step", "cosine"],
-               help="Learning rate scheduler type for inner training")
-p.add_argument("--log-dir", type=str, default=None,
-               help="Directory for TensorBoard logs (if --log-tb is set)")
-p.add_argument("--log-tb", action="store_true")
-p.add_argument("--verbose", action="store_true")
-p.add_argument("--train-log-level", choices=["ERROR", "WARNING", "INFO", "DEBUG"], default="ERROR")
+p.add_argument("--model-dir", required=True, help="Directory containing model checkpoints and artifacts")
+p.add_argument("--dataset", default="CIFAR10", help="Dataset name (e.g., CIFAR10, MNIST)")
+p.add_argument("--model", default="resnet20", help="Model architecture (e.g., resnet20)")
+p.add_argument("--batch-size", type=int, default=128, help="Batch size for training")
+p.add_argument("--lr", type=float, default=0.1, help="Learning rate")
+p.add_argument("--epochs", type=int, default=2, help="Number of epochs")
+p.add_argument("--dist", nargs="+", default=["1", "2", "inf", "cos"], help="Distance metrics to use")
+p.add_argument("--delta", nargs="+", type=float, default=[1e4, 100, 1, 0.1], help="Thresholds for distance metrics")
+p.add_argument("--q", type=int, default=0, help="Number of top intervals to verify (0 for full verification)")
+p.add_argument("--watermark-path", default="model_with_watermark.pth", help="Path to the watermarked model")
+p.add_argument("--scheduler", type=str, default="step", choices=["none", "step", "cosine"], help="Scheduler type")
+p.add_argument("--log-dir", type=str, default=None, help="Directory for TensorBoard logs")
+p.add_argument("--log-tb", action="store_true", help="Enable TensorBoard logging")
+p.add_argument("--verbose", action="store_true", help="Enable verbose logging")
+p.add_argument("--train-log-level", choices=["ERROR", "WARNING", "INFO", "DEBUG"], default="ERROR", help="Log level for training")
 p.add_argument("--precompute-topq", action="store_true", help="Precompute distances for top-q selection")
 args = p.parse_args()
 
@@ -221,11 +317,11 @@ else:
     wm = {}
     logging.warning("[watermark_info] watermark_info.json missing, using defaults")
 args.watermark_method = wm.get("watermark_method", "none")
-args.watermark_key = wm.get("watermark_key", "")
-args.k = wm.get("k", 0)
+args.watermark_key = wm.get("watermark_key", "secret_key")
+args.k = wm.get("k", 100)
 args.randomize = wm.get("randomize", False)
-args.num_parameters = wm.get("num_parameters", 0)
-args.perturbation_strength = wm.get("perturbation_strength", 0.0)
+args.num_parameters = wm.get("num_parameters", 1000)
+args.perturbation_strength = wm.get("perturbation_strength", 1e-5)
 args.watermark_size = wm.get("watermark_size", 128)
 
 # Validate watermark parameters
