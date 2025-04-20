@@ -1,11 +1,10 @@
-# utils.py
-
 import numpy as np
 import torch
 import torch.nn as nn
 import torchvision
 import torchvision.transforms as transforms
 from scipy import stats
+from pathlib import Path  # Added import for Path handling
 
 from watermark_utils import WatermarkModule
 
@@ -54,7 +53,9 @@ def consistent_type(
     but also checks if the checkpoint has 'original_model.*' keys. If yes, we wrap
     the base architecture with WatermarkModule before load_state_dict().
     """
-    if isinstance(model, str):
+    if isinstance(model, (str, Path)):  # Updated to handle both str and Path
+        if isinstance(model, Path):
+            model = str(model)  # Convert Path to string
         assert architecture is not None, "Need architecture if 'model' is a path"
         state = torch.load(model)
 
