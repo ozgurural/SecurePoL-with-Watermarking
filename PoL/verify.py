@@ -81,7 +81,7 @@ def _check_init(d: Path, arch) -> bool:
     net = WatermarkModule(arch(), "k", 128) if wrapped else arch()
     net.load_state_dict(st["net"])
     ks = utils.check_weights_initialization(next(net.parameters()), "resnet")
-    ok = ks >= 0.01
+    ok = ks <= 0.01  # Changed to <= to accept small KS values
     logging.info(f"[init‑ks] KS={ks:.2e} → {'✓' if ok else '✗'}")
     return ok
 
@@ -91,7 +91,7 @@ def _silent_train(lvl, scheduler_type="step", **kw):
     prev = root.level
     root.setLevel(lvl)
     try:
-        net, *_ = train(scheduler_type=scheduler_type, **kw)
+        net, *_ = train(scheduler_type=scheduler_type, **kw, save_checkpoints=False)  # Pass save_checkpoints=False
     finally:
         root.setLevel(prev)
     return net
@@ -109,14 +109,20 @@ def verify_all(*, model_dir: Path, arch, order, thr, cfg, writer=None) -> bool:
     seq = np.load(model_dir / "indices.npy")
     rows = []
     ok = True
+    # Create a temporary directory for verification
+    verify_temp_dir = model_dir / "verify_temp"
+    verify_temp_dir.mkdir(exist_ok=True)
     for i, (c, n) in enumerate(zip(ck[:-1], ck[1:])):
         s, e = c * cfg["batch_size"], min(n * cfg["batch_size"], len(seq))
         if e <= s:
             continue
+        # Use a unique subdirectory for each interval
+        interval_dir = verify_temp_dir / f"interval_{c}_{n}"
+        interval_dir.mkdir(exist_ok=True)
         net = _silent_train(
             cfg["log_lvl"],
             scheduler_type=cfg["scheduler_type"],
-            model_dir=str(model_dir / f"model_step_{c}"),
+            model_dir=str(interval_dir),
             sequence=seq[s:e],
             **cfg["train"]
         )

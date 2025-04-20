@@ -95,6 +95,7 @@ def train(
         log_dir: str | None = None,
         scheduler_type: str = "step",
         verbose: bool = False,
+        save_checkpoints: bool = True,  # New parameter to control checkpoint saving
 ):
     """
     Train a model and (optionally) embed a watermark.
@@ -280,7 +281,7 @@ def train(
     original_param_values = {}
 
     def _save_checkpoint(step: int):
-        if save_freq is None or step % save_freq:
+        if not save_checkpoints or save_freq is None or step % save_freq:
             return
         ckpt = dict(
             net=net.state_dict(),
