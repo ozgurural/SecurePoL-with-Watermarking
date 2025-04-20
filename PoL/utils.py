@@ -23,7 +23,8 @@ def set_parameters(net, parameters, device):
 
 def create_sequences(batch_size, dataset_size, epochs, seed=777):
     """
-    Generate a deterministic sequence of indices for training.
+    Generate a deterministic sequence of indices for training by shuffling the dataset once
+    and repeating it for the specified number of epochs.
 
     Args:
         batch_size (int): Batch size.
@@ -35,11 +36,9 @@ def create_sequences(batch_size, dataset_size, epochs, seed=777):
         np.ndarray: Array of shape [num_batches, batch_size] containing indices.
     """
     rng = np.random.default_rng(seed)
-    sequence = np.concatenate([
-        rng.choice(dataset_size, size=dataset_size, replace=False)
-        for _ in range(epochs)
-    ])
-    num_batch = int(len(sequence) // batch_size)
+    shuffled_indices = rng.permutation(dataset_size)  # Shuffle once
+    sequence = np.tile(shuffled_indices, epochs)     # Repeat for all epochs
+    num_batch = len(sequence) // batch_size
     return np.reshape(sequence[:num_batch * batch_size], [num_batch, batch_size])
 
 def consistent_type(

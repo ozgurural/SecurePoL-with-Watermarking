@@ -5,14 +5,17 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from typing import Dict, List, Sequence, Tuple, Union
+import os
+from typing import Dict, List, Tuple, Union
 
 import numpy as np
 import torch
 import torch.nn as nn
 
+# Configurable logging level via environment variable (defaults to INFO)
+log_level = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
-    level=logging.INFO,
+    level=getattr(logging, log_level, logging.INFO),
     format="%(asctime)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s",
 )
 
@@ -20,10 +23,27 @@ logging.basicConfig(
 #                    Random Helpers (Side-Effect-Free)              #
 # ------------------------------------------------------------------ #
 def _np_rng(key: Union[str, int]) -> np.random.Generator:
+    """Create a seeded NumPy random number generator.
+
+    Args:
+        key: Seed key as a string or integer.
+
+    Returns:
+        A seeded NumPy random number generator.
+    """
     seed = int(hashlib.sha256(str(key).encode()).hexdigest(), 16) % 2**32
     return np.random.default_rng(seed)
 
 def _torch_rng(key: Union[str, int], device: Union[torch.device, str] = "cpu") -> torch.Generator:
+    """Create a seeded PyTorch random number generator.
+
+    Args:
+        key: Seed key as a string or integer.
+        device: Device for the generator (default: "cpu").
+
+    Returns:
+        A seeded PyTorch random number generator.
+    """
     g = torch.Generator(device=device)
     seed = int(hashlib.sha256(str(key).encode()).hexdigest(), 16) % 2**32
     g.manual_seed(seed)
@@ -33,11 +53,31 @@ def _torch_rng(key: Union[str, int], device: Union[torch.device, str] = "cpu") -
 #                     Parameter-Perturbation Helpers                #
 # ------------------------------------------------------------------ #
 def generate_watermark_pattern(wm_key: str, length: int) -> np.ndarray:
-    """Return deterministic {0,1} array of length *length*."""
+    """Generate a deterministic binary array for watermarking.
+
+    Args:
+        wm_key: Watermark key for seeding.
+        length: Length of the binary pattern.
+
+    Returns:
+        A NumPy array of 0s and 1s with the specified length.
+    """
     return _np_rng(wm_key).integers(0, 2, size=length, dtype=np.int8)
 
 def select_parameters_to_perturb(model: nn.Module, num_params: int, wm_key: str) -> List[Tuple[str, nn.Parameter]]:
-    """Pick *num_params* trainable, non-BN parameters – deterministic."""
+    """Select a deterministic subset of trainable, non-BatchNorm parameters.
+
+    Args:
+        model: PyTorch model to select parameters from.
+        num_params: Number of parameters to select.
+        wm_key: Watermark key for deterministic selection.
+
+    Returns:
+        List of (name, parameter) tuples to perturb.
+
+    Raises:
+        ValueError: If num_params exceeds available trainable parameters.
+    """
     params = [
         (n, p) for n, p in model.named_parameters()
         if p.requires_grad and not any(tag in n.lower() for tag in ("bn", "running_mean", "running_var"))
@@ -48,14 +88,31 @@ def select_parameters_to_perturb(model: nn.Module, num_params: int, wm_key: str)
     idxs = _np_rng(wm_key + "_param_select").choice(len(params), size=num_params, replace=False)
     return [params[i] for i in idxs]
 
-def apply_parameter_perturbations(chosen: Sequence[Tuple[str, nn.Parameter]], pattern: np.ndarray, strength: float) -> None:
-    """In-place ± *strength* perturbation according to *pattern*."""
+def apply_parameter_perturbations(chosen: List[Tuple[str, nn.Parameter]], pattern: np.ndarray, strength: float) -> None:
+    """Apply in-place perturbations to parameters based on the pattern.
+
+    Args:
+        chosen: List of (name, parameter) tuples to perturb.
+        pattern: Binary pattern determining perturbation direction.
+        strength: Magnitude of the perturbation.
+    """
     with torch.no_grad():
         for (_, p), bit in zip(chosen, pattern.astype(bool)):
             p.add_(strength if bit else -strength)
 
 def should_embed_watermark(step: int, k: int, wm_key: str, *, randomize: bool = False, device: Union[torch.device, str] = "cpu") -> bool:
-    """Return True when watermark should be embedded at this *step*."""
+    """Determine if the watermark should be embedded at the current step.
+
+    Args:
+        step: Current training step.
+        k: Embedding frequency or interval.
+        wm_key: Watermark key for randomization.
+        randomize: If True, use probabilistic embedding (default: False).
+        device: Device for random number generation (default: "cpu").
+
+    Returns:
+        True if the watermark should be embedded, False otherwise.
+    """
     if k <= 0:
         return False
     if randomize:
@@ -66,13 +123,34 @@ def should_embed_watermark(step: int, k: int, wm_key: str, *, randomize: bool = 
 # ------------------------------------------------------------------ #
 #                     Feature-Based Watermarking                    #
 # ------------------------------------------------------------------ #
-def prepare_watermark_data(device: Union[torch.device, str] = "cpu", wm_key: str = "key") -> torch.Tensor:
-    """Generate 100 CIFAR-like random inputs, seeded by *wm_key*."""
+def prepare_watermark_data(model: nn.Module | None = None, wm_key: str = "key") -> torch.Tensor:
+    """Generate random CIFAR-like inputs for watermark verification.
+
+    Args:
+        model: Optional model to infer device from (default: None).
+        wm_key: Watermark key for seeding (default: "key").
+
+    Returns:
+        A tensor of shape (100, 3, 32, 32) with random inputs on the appropriate device.
+    """
+    device = model.device if model is not None else "cpu"
     rng = _torch_rng(wm_key, device)
     return torch.randn(100, 3, 32, 32, device=device, generator=rng)
 
 def embed_feature_watermark(feats: torch.Tensor, wm_key: str, step: int) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Return (desired_feats, mask) for MSE penalty during training."""
+    """Compute desired features and mask for watermark embedding.
+
+    The mask determines which features are perturbed (approximately 1%),
+    and noise is added to create the desired watermark pattern.
+
+    Args:
+        feats: Original feature tensor.
+        wm_key: Watermark key for seeding.
+        step: Current training step.
+
+    Returns:
+        Tuple of (desired features, mask) for watermarking.
+    """
     rng = _torch_rng(f"{wm_key}_{step}", feats.device)
     mask = (torch.rand_like(feats, generator=rng) < 0.01).float()
     noise = torch.randn_like(feats, generator=rng) * 0.01
@@ -80,7 +158,16 @@ def embed_feature_watermark(feats: torch.Tensor, wm_key: str, step: int) -> Tupl
 
 # ---------- Verification Helpers for Feature-Based Watermark ---------- #
 def extract_features(model: nn.Module, inputs: torch.Tensor, layer_name: str = "layer1") -> torch.Tensor:
-    """Hook into *layer_name* and return its raw activations."""
+    """Extract features from a specified layer using a forward hook.
+
+    Args:
+        model: PyTorch model to extract features from.
+        inputs: Input tensor to the model.
+        layer_name: Name of the layer to hook (default: "layer1").
+
+    Returns:
+        Feature tensor from the specified layer.
+    """
     buf = []
     h = dict(model.named_modules())[layer_name].register_forward_hook(lambda _, __, out: buf.append(out))
     with torch.no_grad():
@@ -89,7 +176,20 @@ def extract_features(model: nn.Module, inputs: torch.Tensor, layer_name: str = "
     return buf[0]
 
 def check_watermark_in_features(features: torch.Tensor, wm_key: str, step: int = 0, threshold: float = 0.0001) -> bool:
-    """Recompute mask/noise for *step*, compare to features. If mean diff < threshold => detected."""
+    """Verify the watermark in features by checking mean difference.
+
+    The default threshold of 0.0001 balances sensitivity and robustness,
+    but can be adjusted based on model and training conditions.
+
+    Args:
+        features: Extracted feature tensor.
+        wm_key: Watermark key for seeding.
+        step: Training step to verify (default: 0).
+        threshold: Maximum allowed mean difference (default: 0.0001).
+
+    Returns:
+        True if watermark is detected, False otherwise.
+    """
     rng = _torch_rng(f"{wm_key}_{step}", features.device)
     mask = (torch.rand_like(features, generator=rng) < 0.01).float()
     noise = torch.randn_like(features, generator=rng) * 0.01
@@ -106,9 +206,21 @@ def run_feature_based_watermark_verification(
         steps: List[int] = [0, 1000],
         threshold: float = 0.0001
 ) -> bool:
-    """Prepare WM inputs, extract features at *layer_name*, and check watermark at specified *steps*."""
+    """Run feature-based watermark verification on the model.
+
+    Args:
+        model: PyTorch model to verify.
+        wm_key: Watermark key for seeding (default: "key").
+        device: Device to run verification on (default: "cpu").
+        layer_name: Layer to extract features from (default: "layer1").
+        steps: List of steps to check (default: [0, 1000]).
+        threshold: Verification threshold (default: 0.0001).
+
+    Returns:
+        True if watermark is detected at any step, False otherwise.
+    """
     model.to(device).eval()
-    wm_inputs = prepare_watermark_data(device, wm_key)
+    wm_inputs = prepare_watermark_data(model, wm_key)  # Infer device from model if provided
     feats = extract_features(model, wm_inputs, layer_name)
     for step in steps:
         if check_watermark_in_features(feats, wm_key, step, threshold):
@@ -121,17 +233,40 @@ def run_feature_based_watermark_verification(
 #                       Non-Intrusive Option B                      #
 # ------------------------------------------------------------------ #
 def generate_watermark_target(x: torch.Tensor, wm_key: str, wm_size: int) -> torch.Tensor:
-    """Produce [batch, wm_size] targets, seeded by *wm_key+'_target'*."""
+    """Generate random watermark targets for the batch.
+
+    Args:
+        x: Input tensor to match batch size.
+        wm_key: Watermark key for seeding.
+        wm_size: Size of the watermark output.
+
+    Returns:
+        Tensor of shape (batch_size, wm_size) with random targets.
+    """
     rng = _torch_rng(f"{wm_key}_target", x.device)
     return torch.randn(x.size(0), wm_size, device=x.device, generator=rng)
 
 def generate_trigger_inputs(wm_key: str, device: Union[torch.device, str] = "cpu") -> torch.Tensor:
-    """Produce 10 random CIFAR-like trigger inputs, seeded by *wm_key+'_trigger'*."""
+    """Generate random trigger inputs for watermark verification.
+
+    Args:
+        wm_key: Watermark key for seeding.
+        device: Device to place the tensor on (default: "cpu").
+
+    Returns:
+        Tensor of shape (10, 3, 32, 32) with random trigger inputs.
+    """
     rng = _torch_rng(f"{wm_key}_trigger", device)
     return torch.randn(10, 3, 32, 32, device=device, generator=rng)
 
 class WatermarkModule(nn.Module):
-    """Wrap a CIFAR-10 classifier to output a hidden vector when *trigger*=True."""
+    """Wrap a base model to add watermark functionality when triggered.
+
+    Args:
+        base: Base PyTorch model to wrap.
+        wm_key: Watermark key for seeding.
+        wm_size: Size of the watermark output (default: 128).
+    """
     def __init__(self, base: nn.Module, wm_key: str, wm_size: int = 128) -> None:
         super().__init__()
         self.base = base
@@ -140,6 +275,15 @@ class WatermarkModule(nn.Module):
         self.wm_size = wm_size
 
     def forward(self, x: torch.Tensor, *, trigger: bool = False) -> torch.Tensor:
+        """Forward pass with optional watermark triggering.
+
+        Args:
+            x: Input tensor.
+            trigger: If True, output watermark vector (default: False).
+
+        Returns:
+            Model output or watermark output if triggered.
+        """
         logits = self.base(x)
         return self.fc(logits) if trigger else logits
 
@@ -150,7 +294,18 @@ def verify_non_intrusive_watermark(
         wm_size: int,
         tol: float = 1e-5,
 ) -> bool:
-    """Check that model(triggers,True) ≈ generate_watermark_target(triggers)."""
+    """Verify the non-intrusive watermark using MSE on trigger inputs.
+
+    Args:
+        model: PyTorch model to verify.
+        device: Device to run verification on.
+        wm_key: Watermark key for seeding.
+        wm_size: Size of the watermark output.
+        tol: MSE tolerance for verification (default: 1e-5).
+
+    Returns:
+        True if watermark is verified, False otherwise.
+    """
     model.to(device).eval()
     with torch.no_grad():
         trig = generate_trigger_inputs(wm_key, device)
@@ -171,7 +326,18 @@ def verify_parameter_perturbation_watermark_relative(
         strength: float,
         tol: float = 1e-3,
 ) -> bool:
-    """Compare selected parameters against originals + expected ±strength."""
+    """Verify parameter perturbations relative to original values.
+
+    Args:
+        model: PyTorch model to verify.
+        original_params: Dictionary of original parameter values, or None.
+        wm_key: Watermark key for seeding.
+        strength: Expected perturbation magnitude.
+        tol: Maximum allowed difference (default: 1e-3).
+
+    Returns:
+        True if perturbations match expectations, False otherwise.
+    """
     params = [
         (n, p) for n, p in model.named_parameters()
         if p.requires_grad and not any(tag in n.lower() for tag in ("bn", "running_mean", "running_var"))
