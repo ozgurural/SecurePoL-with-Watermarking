@@ -45,7 +45,7 @@ def _dump(rows, out_dir: Path, stem: str) -> None:
         w.writeheader()
         w.writerows(rows)
     js_p.write_text(json.dumps(rows, indent=2))
-    logging.info(f"[export] {csv_p.relative_to(Path.cwd())}")
+    logging.info(f"[export] {csv_p}")  # Log the absolute path
 
 # ───────── watermark sanity (feature‑based) ─────────
 def _feature_wm_ok(net, dev="cpu", wm_key="secret_key") -> bool:
