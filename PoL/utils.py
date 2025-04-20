@@ -7,15 +7,13 @@ import torchvision
 import torchvision.transforms as transforms
 from scipy import stats
 
-from watermark_utils import WatermarkModule  # <-- PATCH: So we can instantiate WatermarkModule if needed.
-
+from watermark_utils import WatermarkModule
 
 def get_parameters(net, numpy: bool = False):
-    """Flatten parameters to a *single 1‑D* tensor  (float32)."""
+    """Flatten parameters to a *single 1‑D* tensor (float32)."""
     if isinstance(net, tuple): net = net[0]
     vec = torch.cat([p.detach().flatten().float() for p in net.parameters()])
     return vec.cpu().numpy() if numpy else vec
-
 
 def set_parameters(net, parameters, device):
     # Unflatten & load weights from a list of np arrays to a torch model
@@ -23,23 +21,34 @@ def set_parameters(net, parameters, device):
         param.data = torch.Tensor(parameters[i]).to(device)
     return net
 
+def create_sequences(batch_size, dataset_size, epochs, seed=777):
+    """
+    Generate a deterministic sequence of indices for training.
 
-def create_sequences(batch_size, dataset_size, epochs):
+    Args:
+        batch_size (int): Batch size.
+        dataset_size (int): Total size of the dataset.
+        epochs (int): Number of epochs.
+        seed (int): Random seed for deterministic sequence generation.
+
+    Returns:
+        np.ndarray: Array of shape [num_batches, batch_size] containing indices.
+    """
+    rng = np.random.default_rng(seed)
     sequence = np.concatenate([
-        np.random.default_rng().choice(dataset_size, size=dataset_size, replace=False)
+        rng.choice(dataset_size, size=dataset_size, replace=False)
         for _ in range(epochs)
     ])
     num_batch = int(len(sequence) // batch_size)
     return np.reshape(sequence[:num_batch * batch_size], [num_batch, batch_size])
-
 
 def consistent_type(
         model,
         architecture=None,
         device=torch.device('cuda:0' if torch.cuda.is_available() else 'cpu'),
         half=False,
-        watermark_key="secret_key",  # <-- PATCH: Added these two
-        watermark_size=128  # <-- PATCH: so we can create WatermarkModule if needed
+        watermark_key="secret_key",
+        watermark_size=128
 ):
     """
     Ensures 'model' is loaded as a single flat weights tensor on the given device,
@@ -50,17 +59,14 @@ def consistent_type(
         assert architecture is not None, "Need architecture if 'model' is a path"
         state = torch.load(model)
 
-        # <-- PATCH: Detect if checkpoint has "original_model."
         has_prefix = False
         if 'net' in state:
             net_dict = state['net']
             has_prefix = any(k.startswith("original_model.") for k in net_dict.keys())
         else:
-            # If there's no 'net' sub-dict, fallback
             net_dict = state
             has_prefix = any(k.startswith("original_model.") for k in net_dict.keys())
 
-        # Based on has_prefix, create correct net
         if has_prefix:
             base_net = architecture()
             net = WatermarkModule(base_net, watermark_key, watermark_size=watermark_size)
@@ -75,17 +81,13 @@ def consistent_type(
         weights = torch.tensor(model)
 
     elif not isinstance(model, torch.Tensor):
-        # Possibly a loaded model object
-        # Convert to flatten
         weights = get_parameters(model)
     else:
-        # model is already a Tensor
         weights = model
 
     if half:
         weights = weights.half()
     return weights.to(device)
-
 
 def parameter_distance(
         model1,
@@ -93,7 +95,6 @@ def parameter_distance(
         order=2,
         architecture=None,
         half=False,
-        # <-- PATCH: pass watermark info so consistent_type can load WatermarkModule if needed
         watermark_key="secret_key",
         watermark_size=128
 ):
@@ -105,15 +106,15 @@ def parameter_distance(
         model1,
         architecture=architecture,
         half=half,
-        watermark_key=watermark_key,  # <-- PATCH
-        watermark_size=watermark_size  # <-- PATCH
+        watermark_key=watermark_key,
+        watermark_size=watermark_size
     )
     w2 = consistent_type(
         model2,
         architecture=architecture,
         half=half,
-        watermark_key=watermark_key,  # <-- PATCH
-        watermark_size=watermark_size  # <-- PATCH
+        watermark_key=watermark_key,
+        watermark_size=watermark_size
     )
 
     orders = [order] if not isinstance(order, list) else order
@@ -122,7 +123,6 @@ def parameter_distance(
         if o == 'inf':
             o = np.inf
         if o in ['cos', 'cosine']:
-            # 1 - cos similarity
             val = 1 - torch.dot(w1, w2) / (torch.norm(w1) * torch.norm(w2))
             results.append(val.cpu().item())
         else:
@@ -135,9 +135,20 @@ def parameter_distance(
             results.append(val.cpu().item())
     return results
 
+def load_dataset(dataset, train, download=True, augment=False):
+    """
+    Load dataset with optional augmentation.
 
-def load_dataset(dataset, train, download=True, augment=True):
-    # Load dataset with optional augmentation
+    Args:
+        dataset (str): Name of the dataset (e.g., 'CIFAR10', 'MNIST').
+        train (bool): If True, load training set; else load test set.
+        download (bool): If True, download the dataset if not present.
+        augment (bool): If True, apply random augmentations (e.g., RandomCrop, RandomHorizontalFlip).
+                        Set to False for Proof-of-Learning to ensure deterministic training.
+
+    Returns:
+        Dataset object.
+    """
     try:
         dataset_class = getattr(torchvision.datasets, dataset)
     except AttributeError:
@@ -182,7 +193,6 @@ def load_dataset(dataset, train, download=True, augment=True):
     data = dataset_class(root='./data', train=train, download=download, transform=transform)
     return data
 
-
 def ks_test(reference, rvs):
     device = rvs.device
     with torch.no_grad():
@@ -192,23 +202,19 @@ def ks_test(reference, rvs):
         ks_stat = torch.max(torch.abs(cdf_vals - ecdf)).item()
     return ks_stat
 
-
 def check_weights_initialization(param, method):
     if method == 'default':
-        # Kaiming uniform
         fan = nn.init._calculate_correct_fan(param, 'fan_in')
         gain = nn.init.calculate_gain('leaky_relu', np.sqrt(5))
         std = gain / np.sqrt(fan)
         bound = np.sqrt(3.0) * std
         reference = torch.distributions.Uniform(-bound, bound).cdf
     elif method == 'resnet_cifar':
-        # Kaiming normal (fan_in)
         fan = nn.init._calculate_correct_fan(param, 'fan_in')
         gain = nn.init.calculate_gain('relu', 0)
         std = gain / np.sqrt(fan)
         reference = torch.distributions.Normal(0, std).cdf
     elif method == 'resnet':
-        # Kaiming normal (fan_out)
         fan = nn.init._calculate_correct_fan(param, 'fan_out')
         gain = nn.init.calculate_gain('relu', 0)
         std = gain / np.sqrt(fan)
@@ -231,7 +237,6 @@ def check_weights_initialization(param, method):
     ks_stat = ks_test(reference, rvs)
     p_value = stats.kstwo.sf(ks_stat, rvs.shape[0])
     return p_value
-
 
 def test_accuracy(test_loader, model, num_samples):
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')

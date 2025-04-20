@@ -37,12 +37,11 @@ from watermark_utils import (  # local watermark_utils.py
     run_feature_based_watermark_verification,
 )
 
-
 # --------------------------------------------------------------------------- #
 #                                LOGGING SETUP                                #
 # --------------------------------------------------------------------------- #
 
-def _init_logging(save_dir: str | None, verbose: bool = False):  # NEW: Add verbose parameter
+def _init_logging(save_dir: str | None, verbose: bool = False):
     """
     Configure logging: console + (optional) train.log file.
     """
@@ -51,11 +50,10 @@ def _init_logging(save_dir: str | None, verbose: bool = False):  # NEW: Add verb
         os.makedirs(save_dir, exist_ok=True)
         handlers.append(logging.FileHandler(os.path.join(save_dir, "train.log")))
     logging.basicConfig(
-        level=logging.DEBUG if verbose else logging.INFO,  # NEW: Use DEBUG level if verbose
+        level=logging.DEBUG if verbose else logging.INFO,
         format="%(asctime)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s",
         handlers=handlers,
     )
-
 
 # --------------------------------------------------------------------------- #
 #                          WEIGHT INITIALISATION                              #
@@ -64,7 +62,6 @@ def _init_logging(save_dir: str | None, verbose: bool = False):  # NEW: Add verb
 def _weights_init(m):
     if isinstance(m, (nn.Linear, nn.Conv2d)):
         nn.init.kaiming_normal_(m.weight)
-
 
 # --------------------------------------------------------------------------- #
 #                                  TRAINING                                   #
@@ -76,9 +73,8 @@ def train(
         epochs: int,
         dataset: str,
         architecture,
-        augment: bool = False,
         exp_id: str | None = None,
-        model_dir: str | None = None,  # NEW: Renamed from save_dir to model_dir for clarity
+        model_dir: str | None = None,
         save_freq: int | None = None,
         sequence=None,
         num_gpu: int = torch.cuda.device_count(),
@@ -96,15 +92,14 @@ def train(
         watermark_size: int = 128,
         subset_size: int | None = None,
         log_tb: bool = False,
-        log_dir: str | None = None,  # NEW: Add log_dir parameter for TensorBoard
-        scheduler_type: str = "step",  # NEW: Add scheduler_type parameter
-        verbose: bool = False,  # NEW: Add verbose parameter
+        log_dir: str | None = None,
+        scheduler_type: str = "step",
+        verbose: bool = False,
 ):
     """
     Train a model and (optionally) embed a watermark.
     Returns: (net, optimizer, criterion, original_param_values)
     """
-
     # ----------------------------------------------------------------------- #
     #  0.  Device                                                             #
     # ----------------------------------------------------------------------- #
@@ -114,22 +109,23 @@ def train(
     if model_dir is None:
         model_dir = os.path.join("proof", f"{dataset}_{exp_id or datetime.now().strftime('%Y%m%d_%H%M%S')}")
 
-    _init_logging(model_dir, verbose=verbose)  # NEW: Pass verbose to logging
+    _init_logging(model_dir, verbose=verbose)
     logging.info(f"Using device: {device}")
+    logging.info("Data augmentation is disabled to ensure reproducibility for Proof-of-Learning.")
 
     # ----------------------------------------------------------------------- #
     #  1.  Dataset & sequence                                                 #
     # ----------------------------------------------------------------------- #
     logging.info("=== Loading Dataset ===")
-    trainset = utils.load_dataset(dataset, train=True, augment=augment)
+    trainset = utils.load_dataset(dataset, train=True, augment=False)  # Explicitly disable augmentation
     full_train_size = len(trainset)
     logging.info(f"Dataset '{dataset}' loaded with {full_train_size} samples.")
 
+    seed = 777  # Define seed early for sequence generation
     if sequence is None:
         subset_size = min(subset_size or full_train_size, full_train_size)
-        idxs = np.arange(full_train_size)
-        np.random.shuffle(idxs)
-        sequence = idxs[:subset_size]
+        # Use utils.create_sequences for modularity and deterministic sequence generation
+        sequence = utils.create_sequences(batch_size, full_train_size, epochs=1, seed=seed).flatten()[:subset_size]
         logging.info(f"No sequence provided → training on subset_size={subset_size}.")
     else:
         logging.info(f"Using provided sequence (length={len(sequence)}).")
@@ -160,7 +156,6 @@ def train(
     # ----------------------------------------------------------------------- #
     #  3.  Optimiser & LR scheduler                                           #
     # ----------------------------------------------------------------------- #
-    # NEW: Support different scheduler types
     if dataset == "MNIST":
         optimizer = optim.SGD(net.parameters(), lr=lr)
         scheduler = None
@@ -200,7 +195,6 @@ def train(
     # ----------------------------------------------------------------------- #
     #  5.  Reproducibility                                                    #
     # ----------------------------------------------------------------------- #
-    seed = 777
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     np.random.seed(seed)
@@ -241,12 +235,13 @@ def train(
     # ----------------------------------------------------------------------- #
     #  7.  DataLoader                                                         #
     # ----------------------------------------------------------------------- #
+    pin_memory = True if torch.cuda.is_available() else False
     trainloader = torch.utils.data.DataLoader(
         torch.utils.data.Subset(trainset, sequence),
         batch_size=batch_size,
         shuffle=False,
-        num_workers=2,
-        pin_memory=True,
+        num_workers=0,  # Set to 0 for strict determinism
+        pin_memory=pin_memory,
     )
 
     # ----------------------------------------------------------------------- #
@@ -255,7 +250,6 @@ def train(
     writer_ctx = nullcontext()
     if log_tb:
         from torch.utils.tensorboard import SummaryWriter
-        # NEW: Use log_dir if provided, otherwise fallback to model_dir or default
         tb_log_dir = log_dir if log_dir else (model_dir or "./runs")
         writer_ctx = SummaryWriter(log_dir=tb_log_dir)
 
@@ -410,7 +404,6 @@ def train(
     logging.info("=== Training Completed ===")
     return net, optimizer, criterion, original_param_values
 
-
 # --------------------------------------------------------------------------- #
 #                               VALIDATION                                    #
 # --------------------------------------------------------------------------- #
@@ -422,9 +415,10 @@ def validate(dataset, model, criterion, batch_size: int = 128):
     from watermark_utils import WatermarkModule
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    testset = utils.load_dataset(dataset, train=False, augment=False)
+    testset = utils.load_dataset(dataset, train=False, augment=False)  # Explicitly disable augmentation
+    pin_memory = True if torch.cuda.is_available() else False
     testloader = torch.utils.data.DataLoader(
-        testset, batch_size=batch_size, shuffle=False, num_workers=2, pin_memory=True
+        testset, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=pin_memory  # Set num_workers to 0
     )
 
     model.to(device)
@@ -447,7 +441,6 @@ def validate(dataset, model, criterion, batch_size: int = 128):
     val_acc = correct / total
     return val_loss, val_acc
 
-
 # --------------------------------------------------------------------------- #
 #                            ARGPARSE INTERFACE                               #
 # --------------------------------------------------------------------------- #
@@ -466,17 +459,17 @@ if __name__ == "__main__":
     parser.add_argument("--milestone", nargs="+", type=int, default=None)
     parser.add_argument("--verify", action="store_true")
 
-    # NEW: Add scheduler argument
+    # Add scheduler argument
     parser.add_argument("--scheduler", type=str, default="step", choices=["none", "step", "cosine"],
                         help="Learning rate scheduler type")
 
-    # NEW: Add model-dir and log-dir arguments
+    # Add model-dir and log-dir arguments
     parser.add_argument("--model-dir", type=str, default=None,
                         help="Directory to save model checkpoints and PoL artifacts")
     parser.add_argument("--log-dir", type=str, default=None,
                         help="Directory for TensorBoard logs (if --log-tb is set)")
 
-    # NEW: Add verbose argument
+    # Add verbose argument
     parser.add_argument("--verbose", action="store_true",
                         help="Enable verbose logging for debugging")
 
@@ -499,10 +492,6 @@ if __name__ == "__main__":
     # TensorBoard flag
     parser.add_argument("--log-tb", action="store_true", help="Enable TensorBoard logging")
 
-    # Data‑augmentation flag
-    parser.add_argument("--augment", action="store_true",
-                        help="If set, apply CIFAR-style random crop+flip during training")
-
     args = parser.parse_args()
 
     # Re‑seed
@@ -518,11 +507,9 @@ if __name__ == "__main__":
     # Resolve architecture
     try:
         import model as custom_models
-
         architecture = getattr(custom_models, args.model)
     except AttributeError:
         import torchvision.models as tv_models
-
         architecture = getattr(tv_models, args.model)
 
     # ----- TRAIN ----------------------------------------------------------- #
@@ -533,7 +520,7 @@ if __name__ == "__main__":
         dataset=args.dataset,
         architecture=architecture,
         exp_id=args.id,
-        model_dir=args.model_dir,  # NEW: Pass model_dir
+        model_dir=args.model_dir,
         save_freq=args.save_freq,
         num_gpu=args.num_gpu,
         dec_lr=args.milestone,
@@ -548,9 +535,9 @@ if __name__ == "__main__":
         watermark_size=args.watermark_size,
         subset_size=args.subset_size,
         log_tb=args.log_tb,
-        log_dir=args.log_dir,  # NEW: Pass log_dir
-        scheduler_type=args.scheduler,  # NEW: Pass scheduler type
-        verbose=args.verbose,  # NEW: Pass verbose
+        log_dir=args.log_dir,
+        scheduler_type=args.scheduler,
+        verbose=args.verbose,
     )
 
     # ----- POST‑TRAINING WATERMARK CHECKS AND MODEL SAVING ----------------- #
@@ -564,7 +551,6 @@ if __name__ == "__main__":
         logging.info("Saved model_with_feature_based_watermark.pth")
     elif args.watermark_method == "parameter_perturbation":
         from watermark_utils import verify_parameter_perturbation_watermark_relative
-
         verify_parameter_perturbation_watermark_relative(
             model=trained_model,
             original_params=original_param_values,

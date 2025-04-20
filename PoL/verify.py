@@ -16,6 +16,8 @@ from watermark_utils import (
     WatermarkModule,
     verify_non_intrusive_watermark,
     verify_parameter_perturbation_watermark_relative,
+    prepare_watermark_data,  # NEW: Import for deterministic watermark data
+    extract_features,  # NEW: Use watermark_utils version for consistency
 )
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # silence cuDNN/TF chatter
@@ -46,21 +48,12 @@ def _dump(rows, out_dir: Path, stem: str) -> None:
     logging.info(f"[export] {csv_p.relative_to(Path.cwd())}")
 
 # ───────── watermark sanity (feature‑based) ─────────
-def _prepare_watermark_data(dev="cpu") -> torch.Tensor:
-    return torch.randn(100, 3, 32, 32, device=dev)
-
-def _extract_features(model, inputs, layer="layer1"):
-    features = []
-    h = dict(model.named_modules())[layer].register_forward_hook(lambda *_: features.append(_[2]))
-    with torch.no_grad():
-        model(inputs)
-    h.remove()
-    return features[0]
-
-def _feature_wm_ok(net, dev="cpu") -> bool:
+def _feature_wm_ok(net, dev="cpu", wm_key="secret_key") -> bool:
     net.to(dev).eval()
-    inputs = _prepare_watermark_data(dev)
-    feats = _extract_features(net, inputs)
+    # NEW: Use deterministic watermark data from watermark_utils
+    inputs = prepare_watermark_data(device=dev, wm_key=wm_key)
+    # NEW: Use extract_features from watermark_utils for consistency
+    feats = extract_features(net, inputs, layer="layer1")
     mean_val = feats.mean().item()
     ok = mean_val > 0.01
     logging.info(f"[feature_wm] mean={mean_val:.4f} → {'✓' if ok else '✗'}")
@@ -93,12 +86,12 @@ def _check_init(d: Path, arch) -> bool:
     return ok
 
 # ───────── inner‑train silencer ─────────
-def _silent_train(lvl, scheduler_type="step", **kw):  # NEW: Add scheduler_type parameter
+def _silent_train(lvl, scheduler_type="step", **kw):
     root = logging.getLogger()
     prev = root.level
     root.setLevel(lvl)
     try:
-        net, *_ = train(scheduler_type=scheduler_type, **kw)  # NEW: Pass scheduler_type to train
+        net, *_ = train(scheduler_type=scheduler_type, **kw)
     finally:
         root.setLevel(prev)
     return net
@@ -122,7 +115,7 @@ def verify_all(*, model_dir: Path, arch, order, thr, cfg, writer=None) -> bool:
             continue
         net = _silent_train(
             cfg["log_lvl"],
-            scheduler_type=cfg["scheduler_type"],  # NEW: Pass scheduler_type
+            scheduler_type=cfg["scheduler_type"],
             model_dir=str(model_dir / f"model_step_{c}"),
             sequence=seq[s:e],
             **cfg["train"]
@@ -166,7 +159,7 @@ def verify_topq(*, model_dir: Path, arch, order, q, epochs, cfg, writer=None, pr
             s, e = c * cfg["batch_size"], min(n * cfg["batch_size"], len(seq))
             net = _silent_train(
                 cfg["log_lvl"],
-                scheduler_type=cfg["scheduler_type"],  # NEW: Pass scheduler_type
+                scheduler_type=cfg["scheduler_type"],
                 model_dir=str(model_dir / f"model_step_{c}"),
                 sequence=seq[s:e],
                 **cfg["train"]
@@ -193,13 +186,10 @@ p.add_argument("--dist", nargs="+", default=["1", "2", "inf", "cos"])
 p.add_argument("--delta", nargs="+", type=float, default=[1e4, 100, 1, 0.1])
 p.add_argument("--q", type=int, default=0)
 p.add_argument("--watermark-path", default="model_with_watermark.pth")
-# NEW: Add scheduler argument
 p.add_argument("--scheduler", type=str, default="step", choices=["none", "step", "cosine"],
                help="Learning rate scheduler type for inner training")
-# NEW: Add log-dir argument
 p.add_argument("--log-dir", type=str, default=None,
                help="Directory for TensorBoard logs (if --log-tb is set)")
-p.add_argument("--augment", action="store_true")
 p.add_argument("--log-tb", action="store_true")
 p.add_argument("--verbose", action="store_true")
 p.add_argument("--train-log-level", choices=["ERROR", "WARNING", "INFO", "DEBUG"], default="ERROR")
@@ -213,6 +203,7 @@ if len(args.delta) > len(args.dist):
 
 out = Path(args.model_dir)
 _init_logging(out, args.verbose)
+logging.info("Data augmentation is disabled to ensure reproducibility for Proof-of-Learning.")
 arch = getattr(custom_model, args.model)
 
 # read watermark meta (optional)
@@ -249,13 +240,12 @@ pol_ok = _check_init(out, arch) & _check_hash(out, args.dataset)
 cfg = dict(
     batch_size=args.batch_size,
     log_lvl=getattr(logging, args.train_log_level),
-    scheduler_type=args.scheduler,  # NEW: Add scheduler_type to cfg
+    scheduler_type=args.scheduler,
     train=dict(
         lr=args.lr,
         batch_size=args.batch_size,
         epochs=1,
         dataset=args.dataset,
-        augment=args.augment,
         architecture=arch,
         half=0,
         lambda_wm=0.0,
@@ -273,7 +263,6 @@ cfg = dict(
 writer = nullcontext()
 if args.log_tb:
     from torch.utils.tensorboard import SummaryWriter
-    # NEW: Use log_dir if provided, otherwise default to model_dir/tb_verify
     tb_log_dir = args.log_dir if args.log_dir else (out / "tb_verify")
     writer = SummaryWriter(log_dir=tb_log_dir)
 
@@ -306,8 +295,8 @@ if args.watermark_method == "feature_based":
     ckpt = Path(args.watermark_path)
     if ckpt.exists():
         net = arch()
-        net.load_state_dict(torch.load(ckpt, map_location=dev)["net"])
-        wm_ok = _feature_wm_ok(net, dev)
+        net.load_state_dict(torch.load(ckpt, map_location=dev))
+        wm_ok = _feature_wm_ok(net, dev, wm_key=args.watermark_key)
     else:
         logging.error(f"{ckpt} missing")
         wm_ok = False
@@ -315,7 +304,7 @@ elif args.watermark_method == "non_intrusive":
     ckpt = Path(args.watermark_path)
     if ckpt.exists():
         net = WatermarkModule(arch(), args.watermark_key, args.watermark_size)
-        net.load_state_dict(torch.load(ckpt, map_location=dev)["net"])
+        net.load_state_dict(torch.load(ckpt, map_location=dev))
         wm_ok = verify_non_intrusive_watermark(net, dev, args.watermark_key, args.watermark_size, 1e-3)
     else:
         logging.error(f"{ckpt} missing")
