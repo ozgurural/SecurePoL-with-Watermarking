@@ -41,12 +41,13 @@ from watermark_utils import (  # local watermark_utils.py
 #                                LOGGING SETUP                                #
 # --------------------------------------------------------------------------- #
 
-def _init_logging(save_dir: str | None, verbose: bool = False):
+def _init_logging(save_dir: str | None, verbose: bool = False, save_checkpoints: bool = True):
     """
     Configure logging: console + (optional) train.log file.
+    Only create the directory if save_checkpoints is True.
     """
     handlers = [logging.StreamHandler()]
-    if save_dir is not None:
+    if save_dir is not None and save_checkpoints:
         os.makedirs(save_dir, exist_ok=True)
         handlers.append(logging.FileHandler(os.path.join(save_dir, "train.log")))
     logging.basicConfig(
@@ -95,7 +96,7 @@ def train(
         log_dir: str | None = None,
         scheduler_type: str = "step",
         verbose: bool = False,
-        save_checkpoints: bool = True,  # New parameter to control checkpoint saving
+        save_checkpoints: bool = True,  # Controls checkpoint saving and directory creation
 ):
     """
     Train a model and (optionally) embed a watermark.
@@ -110,7 +111,7 @@ def train(
     if model_dir is None:
         model_dir = os.path.join("proof", f"{dataset}_{exp_id or datetime.now().strftime('%Y%m%d_%H%M%S')}")
 
-    _init_logging(model_dir, verbose=verbose)
+    _init_logging(model_dir, verbose=verbose, save_checkpoints=save_checkpoints)
     logging.info(f"Using device: {device}")
     logging.info("Data augmentation is disabled to ensure reproducibility for Proof-of-Learning.")
 
@@ -206,32 +207,33 @@ def train(
     # ----------------------------------------------------------------------- #
     #  6.  PoL artefacts / checkpoint dir                                     #
     # ----------------------------------------------------------------------- #
-    os.makedirs(model_dir, exist_ok=True)
+    if save_checkpoints:
+        os.makedirs(model_dir, exist_ok=True)
 
-    # dataset hash
-    m = hashlib.sha256()
-    data_array = getattr(trainset, "data", getattr(trainset, "train_data", None))
-    if data_array is None:
-        raise AttributeError("Dataset object has neither '.data' nor '.train_data'.")
-    m.update(data_array[sequence].tobytes())
-    with open(os.path.join(model_dir, "hash.txt"), "w") as f:
-        f.write(m.hexdigest())
-    np.save(os.path.join(model_dir, "indices.npy"), sequence)
+        # dataset hash
+        m = hashlib.sha256()
+        data_array = getattr(trainset, "data", getattr(trainset, "train_data", None))
+        if data_array is None:
+            raise AttributeError("Dataset object has neither '.data' nor '.train_data'.")
+        m.update(data_array[sequence].tobytes())
+        with open(os.path.join(model_dir, "hash.txt"), "w") as f:
+            f.write(m.hexdigest())
+        np.save(os.path.join(model_dir, "indices.npy"), sequence)
 
-    wm_info = dict(
-        watermark_key=watermark_key,
-        lambda_wm=lambda_wm,
-        k=k,
-        randomize=randomize,
-        seed=seed,
-        watermark_method=watermark_method,
-        num_parameters=num_parameters,
-        perturbation_strength=perturbation_strength,
-        watermark_size=watermark_size,
-        subset_size=subset_size,
-    )
-    with open(os.path.join(model_dir, "watermark_info.json"), "w") as f:
-        json.dump(wm_info, f, indent=2)
+        wm_info = dict(
+            watermark_key=watermark_key,
+            lambda_wm=lambda_wm,
+            k=k,
+            randomize=randomize,
+            seed=seed,
+            watermark_method=watermark_method,
+            num_parameters=num_parameters,
+            perturbation_strength=perturbation_strength,
+            watermark_size=watermark_size,
+            subset_size=subset_size,
+        )
+        with open(os.path.join(model_dir, "watermark_info.json"), "w") as f:
+            json.dump(wm_info, f, indent=2)
 
     # ----------------------------------------------------------------------- #
     #  7.  DataLoader                                                         #
@@ -260,6 +262,8 @@ def train(
     metrics = []  # list of dicts (one per epoch)
 
     def _dump_metrics():
+        if not save_checkpoints:
+            return
         csv_path = os.path.join(model_dir, "metrics.csv")
         json_path = os.path.join(model_dir, "metrics.json")
 
@@ -539,6 +543,7 @@ if __name__ == "__main__":
         log_dir=args.log_dir,
         scheduler_type=args.scheduler,
         verbose=args.verbose,
+        save_checkpoints=True  # Default to True for training, False for verification
     )
 
     # ----- POST‑TRAINING WATERMARK CHECKS AND MODEL SAVING ----------------- #
