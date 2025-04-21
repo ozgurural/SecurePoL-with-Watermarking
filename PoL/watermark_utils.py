@@ -34,16 +34,17 @@ def _np_rng(key: Union[str, int]) -> np.random.Generator:
     seed = int(hashlib.sha256(str(key).encode()).hexdigest(), 16) % 2**32
     return np.random.default_rng(seed)
 
-def _torch_rng(key: Union[str, int]) -> torch.Generator:
-    """Create a seeded PyTorch random number generator on CPU.
+def _torch_rng(key: Union[str, int], device: Union[torch.device, str]) -> torch.Generator:
+    """Create a seeded PyTorch random number generator on the specified device.
 
     Args:
         key: Seed key as a string or integer.
+        device: Device for the generator.
 
     Returns:
         A seeded PyTorch random number generator.
     """
-    g = torch.Generator(device="cpu")  # Always create on CPU
+    g = torch.Generator(device=device)
     seed = int(hashlib.sha256(str(key).encode()).hexdigest(), 16) % 2**32
     g.manual_seed(seed)
     return g
@@ -115,8 +116,8 @@ def should_embed_watermark(step: int, k: int, wm_key: str, *, randomize: bool = 
     if k <= 0:
         return False
     if randomize:
-        g = _torch_rng(f"{wm_key}_{step}")
-        rand_val = torch.rand(1, generator=g).item()  # Generate on CPU
+        g = _torch_rng(f"{wm_key}_{step}", device)
+        rand_val = torch.rand(1, generator=g, device=device).item()
         return rand_val < 1.0 / k
     return (step % k) == 0
 
@@ -134,7 +135,7 @@ def prepare_watermark_data(model: nn.Module | None = None, wm_key: str = "key") 
         A tensor of shape (100, 3, 32, 32) with random inputs on the appropriate device.
     """
     device = model.device if model is not None else "cpu"
-    g = _torch_rng(wm_key)
+    g = _torch_rng(wm_key, device)
     return torch.randn(100, 3, 32, 32, generator=g, device=device)
 
 def embed_feature_watermark(feats: torch.Tensor, wm_key: str, step: int) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -151,11 +152,9 @@ def embed_feature_watermark(feats: torch.Tensor, wm_key: str, step: int) -> Tupl
     Returns:
         Tuple of (desired features, mask) for watermarking.
     """
-    g = _torch_rng(f"{wm_key}_{step}")
-    # Generate random tensor for mask
+    g = _torch_rng(f"{wm_key}_{step}", feats.device)
     random_tensor = torch.rand(feats.shape, generator=g, device=feats.device)
     mask = (random_tensor < 0.01).float()
-    # Generate noise
     noise = torch.randn(feats.shape, generator=g, device=feats.device) * 0.01
     desired_feats = feats + mask * noise
     return desired_feats, mask
@@ -194,7 +193,7 @@ def check_watermark_in_features(features: torch.Tensor, wm_key: str, step: int =
     Returns:
         True if watermark is detected, False otherwise.
     """
-    g = _torch_rng(f"{wm_key}_{step}")
+    g = _torch_rng(f"{wm_key}_{step}", features.device)
     random_tensor = torch.rand(features.shape, generator=g, device=features.device)
     mask = (random_tensor < 0.01).float()
     noise = torch.randn(features.shape, generator=g, device=features.device) * 0.01
@@ -225,7 +224,7 @@ def run_feature_based_watermark_verification(
         True if watermark is detected at any step, False otherwise.
     """
     model.to(device).eval()
-    wm_inputs = prepare_watermark_data(model, wm_key)  # Infer device from model if provided
+    wm_inputs = prepare_watermark_data(model, wm_key)
     feats = extract_features(model, wm_inputs, layer_name)
     for step in steps:
         if check_watermark_in_features(feats, wm_key, step, threshold):
@@ -248,7 +247,7 @@ def generate_watermark_target(x: torch.Tensor, wm_key: str, wm_size: int) -> tor
     Returns:
         Tensor of shape (batch_size, wm_size) with random targets.
     """
-    g = _torch_rng(f"{wm_key}_target")
+    g = _torch_rng(f"{wm_key}_target", x.device)
     return torch.randn(x.size(0), wm_size, generator=g, device=x.device)
 
 def generate_trigger_inputs(wm_key: str, device: Union[torch.device, str] = "cpu") -> torch.Tensor:
@@ -261,7 +260,7 @@ def generate_trigger_inputs(wm_key: str, device: Union[torch.device, str] = "cpu
     Returns:
         Tensor of shape (10, 3, 32, 32) with random trigger inputs.
     """
-    g = _torch_rng(f"{wm_key}_trigger")
+    g = _torch_rng(f"{wm_key}_trigger", device)
     return torch.randn(10, 3, 32, 32, generator=g, device=device)
 
 class WatermarkModule(nn.Module):
