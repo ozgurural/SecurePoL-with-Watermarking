@@ -194,6 +194,8 @@ def verify_all(*, model_dir: Path, arch, order, thr, cfg, writer=None) -> bool:
     verify_temp_dir.mkdir(exist_ok=True)
     for i, (c, n) in enumerate(zip(ck[:-1], ck[1:])):
         s, e = c * cfg["batch_size"], min(n * cfg["batch_size"], len(seq))
+        if s >= len(seq) or e > len(seq):  # Skip intervals beyond sequence length
+            continue
         if s >= e:
             logging.warning(f"Skipping interval {c}->{n} due to empty sequence slice")
             continue
