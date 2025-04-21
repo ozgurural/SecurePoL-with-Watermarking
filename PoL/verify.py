@@ -18,6 +18,7 @@ from watermark_utils import (
     verify_parameter_perturbation_watermark_relative,
     prepare_watermark_data,
     extract_features,
+    run_feature_based_watermark_verification,
 )
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # silence cuDNN/TF chatter
@@ -419,7 +420,11 @@ if args.watermark_method == "feature_based":
     if ckpt.exists():
         net = arch()
         net.load_state_dict(torch.load(ckpt, map_location=dev))
-        wm_ok = _feature_wm_ok(net, dev, wm_key=args.watermark_key)
+        wm_ok = run_feature_based_watermark_verification(
+            model=net,
+            wm_key=args.watermark_key,
+            device=dev
+        )
     else:
         logging.error(f"{ckpt} missing")
         wm_ok = False

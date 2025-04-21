@@ -552,7 +552,11 @@ if __name__ == "__main__":
         logging.info("No watermark used; baseline PoL.")
         torch.save(trained_model.state_dict(), 'model_baseline_no_watermark.pth')
     elif args.watermark_method == "feature_based":
-        run_feature_based_watermark_verification(trained_model, device, args.watermark_key)
+        run_feature_based_watermark_verification(
+            model=trained_model,
+            wm_key=args.watermark_key,
+            device=device
+        )
         torch.save(trained_model.state_dict(), 'model_with_feature_based_watermark.pth')
         logging.info("Saved model_with_feature_based_watermark.pth")
     elif args.watermark_method == "parameter_perturbation":
