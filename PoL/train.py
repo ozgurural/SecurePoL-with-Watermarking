@@ -329,7 +329,7 @@ def train(
                     handle.remove()
 
                     loss = criterion(outputs, labels)
-                    if lambda_wm > 0 and should_embed_watermark(current_step, k, watermark_key, randomize):
+                    if lambda_wm > 0 and should_embed_watermark(current_step, k, watermark_key, randomize=randomize):
                         feats = feats_list[0]
                         desired_feats, mask = embed_feature_watermark(feats, watermark_key, current_step)
                         wm_loss = nn.MSELoss()(feats * mask, desired_feats * mask)
@@ -342,7 +342,7 @@ def train(
                 elif watermark_method == "non_intrusive":
                     outputs = net(inputs, trigger=False)
                     loss = criterion(outputs, labels)
-                    if lambda_wm > 0 and should_embed_watermark(current_step, k, watermark_key, randomize):
+                    if lambda_wm > 0 and should_embed_watermark(current_step, k, watermark_key, randomize=randomize):
                         target = generate_watermark_target(inputs, watermark_key, watermark_size).to(device)
                         wm_out = net(inputs, trigger=True)
                         wm_loss = nn.MSELoss()(wm_out, target)
@@ -357,7 +357,7 @@ def train(
 
                 # Parameter‑perturbation post‑step adjustment
                 if watermark_method == "parameter_perturbation" and lambda_wm > 0:
-                    if should_embed_watermark(current_step, k, watermark_key, randomize):
+                    if should_embed_watermark(current_step, k, watermark_key, randomize=randomize):
                         sel_params = select_parameters_to_perturb(net, num_parameters, watermark_key)
                         for pname, pt in sel_params:
                             original_param_values[pname] = pt.detach().cpu().clone().numpy()
