@@ -134,7 +134,7 @@ def prepare_watermark_data(model: nn.Module | None = None, wm_key: str = "key") 
     Returns:
         A tensor of shape (100, 3, 32, 32) with random inputs on the appropriate device.
     """
-    device = model.device if model is not None else "cpu"
+    device = next(model.parameters()).device if model is not None else "cpu"
     g = _torch_rng(wm_key, device)
     return torch.randn(100, 3, 32, 32, generator=g, device=device)
 
