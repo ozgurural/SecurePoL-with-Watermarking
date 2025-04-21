@@ -318,6 +318,13 @@ p.add_argument("--log-tb", action="store_true", help="Enable TensorBoard logging
 p.add_argument("--verbose", action="store_true", help="Enable verbose logging")
 p.add_argument("--train-log-level", choices=["ERROR", "WARNING", "INFO", "DEBUG"], default="ERROR", help="Log level for training")
 p.add_argument("--precompute-topq", action="store_true", help="Precompute distances for top-q selection")
+p.add_argument(
+    "--watermark-method",
+    type=str,
+    choices=["none", "feature_based", "parameter_perturbation", "non_intrusive"],
+    default="none",
+    help="Specify the watermark method to use for verification"
+)
 args = p.parse_args()
 
 if len(args.delta) < len(args.dist):
@@ -337,7 +344,10 @@ if wm_f.exists():
 else:
     wm = {}
     logging.warning("[watermark_info] watermark_info.json missing, using defaults")
-args.watermark_method = wm.get("watermark_method", "none")
+
+# Set watermark method: CLI takes precedence, else use JSON value, else "none"
+if args.watermark_method == "none" and "watermark_method" in wm:
+    args.watermark_method = wm["watermark_method"]
 args.watermark_key = wm.get("watermark_key", "secret_key")
 args.k = wm.get("k", 100)
 args.randomize = wm.get("randomize", False)
@@ -345,9 +355,8 @@ args.num_parameters = wm.get("num_parameters", 1000)
 args.perturbation_strength = wm.get("perturbation_strength", 1e-5)
 args.watermark_size = wm.get("watermark_size", 128)
 
-# Validate watermark parameters
-required_wm_fields = ["watermark_method"]
-if not all(f in wm for f in required_wm_fields if wm):
+# Validate watermark parameters (only if watermark info is provided)
+if wm and not all(f in wm for f in ["watermark_method"] if args.watermark_method != "none"):
     logging.error("[watermark_info] Missing required fields in watermark_info.json")
     sys.exit(1)
 
@@ -415,40 +424,39 @@ with writer as tb:
 # ───── watermark check ─────
 wm_ok = True
 dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-if args.watermark_method == "feature_based":
+logging.info(f"Verifying watermark using method: {args.watermark_method}")
+
+if args.watermark_method == "none":
+    logging.info("No watermark method specified; skipping watermark verification.")
+else:
     ckpt = Path(args.watermark_path)
-    if ckpt.exists():
-        net = arch()
-        net.load_state_dict(torch.load(ckpt, map_location=dev))
-        wm_ok = run_feature_based_watermark_verification(
-            model=net,
-            wm_key=args.watermark_key,
-            device=dev
-        )
-    else:
-        logging.error(f"{ckpt} missing")
+    if not ckpt.exists():
+        logging.error(f"Watermark model file missing: {ckpt}")
         wm_ok = False
-elif args.watermark_method == "non_intrusive":
-    ckpt = Path(args.watermark_path)
-    if ckpt.exists():
-        net = WatermarkModule(arch(), args.watermark_key, args.watermark_size)
-        net.load_state_dict(torch.load(ckpt, map_location=dev))
-        wm_ok = verify_non_intrusive_watermark(net, dev, args.watermark_key, args.watermark_size, 1e-3)
     else:
-        logging.error(f"{ckpt} missing")
-        wm_ok = False
-elif args.watermark_method == "parameter_perturbation":
-    ckpt = Path(args.watermark_path)
-    if ckpt.exists():
-        st = torch.load(ckpt, map_location=dev)
-        net = arch()
-        net.load_state_dict(st["net"])
-        wm_ok = verify_parameter_perturbation_watermark_relative(
-            net, st.get("original_param_values"), args.watermark_key, args.perturbation_strength, 1e-1
-        )
-    else:
-        logging.error(f"{ckpt} missing")
-        wm_ok = False
+        try:
+            if args.watermark_method == "feature_based":
+                net = arch()
+                net.load_state_dict(torch.load(ckpt, map_location=dev))
+                wm_ok = run_feature_based_watermark_verification(
+                    model=net,
+                    wm_key=args.watermark_key,
+                    device=dev
+                )
+            elif args.watermark_method == "non_intrusive":
+                net = WatermarkModule(arch(), args.watermark_key, args.watermark_size)
+                net.load_state_dict(torch.load(ckpt, map_location=dev))
+                wm_ok = verify_non_intrusive_watermark(net, dev, args.watermark_key, args.watermark_size, 1e-3)
+            elif args.watermark_method == "parameter_perturbation":
+                st = torch.load(ckpt, map_location=dev)
+                net = arch()
+                net.load_state_dict(st["net"])
+                wm_ok = verify_parameter_perturbation_watermark_relative(
+                    net, st.get("original_param_values"), args.watermark_key, args.perturbation_strength, 1e-1
+                )
+        except Exception as e:
+            logging.error(f"Watermark verification failed: {e}")
+            wm_ok = False
 
 logging.info(f"[PoL status] {'✓ valid' if pol_ok else '✗ INVALID'}")
 logging.info(f"[watermark ] {'✓ passed' if wm_ok else '✗ FAILED'}")
