@@ -150,6 +150,14 @@ def train(
     # ----------------------------------------------------------------------- #
     net = architecture()
     net.apply(_weights_init)
+    # ---------- NEW (baseline snapshot) -----------------------------------
+    original_param_values = {}
+    if watermark_method == "parameter_perturbation":
+        for n, p in net.named_parameters():
+            if p.requires_grad and not any(tag in n.lower()
+                                           for tag in ("bn", "running_mean", "running_var")):
+                original_param_values[n] = p.detach().cpu().clone().numpy()
+    # ----------------------------------------------------------------------
     if watermark_method == "non_intrusive":
         net = WatermarkModule(net, watermark_key, watermark_size=watermark_size)
     net.to(device)
@@ -282,7 +290,6 @@ def train(
     # 10.  Save initial checkpoint                                            #
     # ----------------------------------------------------------------------- #
     current_step = 0
-    original_param_values = {}
 
     def _save_checkpoint(step: int):
         if not save_checkpoints or save_freq is None or step % save_freq:
@@ -359,8 +366,6 @@ def train(
                 if watermark_method == "parameter_perturbation" and lambda_wm > 0:
                     if should_embed_watermark(current_step, k, watermark_key, randomize=randomize, device=device):
                         sel_params = select_parameters_to_perturb(net, num_parameters, watermark_key)
-                        for pname, pt in sel_params:
-                            original_param_values[pname] = pt.detach().cpu().clone().numpy()
                         pat = generate_watermark_pattern(watermark_key, len(sel_params))
                         apply_parameter_perturbations(sel_params, pat, perturbation_strength)
 
