@@ -27,7 +27,6 @@ import torch.optim as optim
 import utils  # local utils.py
 from watermark_utils import (  # local watermark_utils.py
     generate_watermark_pattern,
-    select_parameters_to_perturb,
     apply_parameter_perturbations,
     should_embed_watermark,
     WatermarkModule,
@@ -362,14 +361,35 @@ def train(
                 loss.backward()
                 optimizer.step()
 
-                # Parameter‑perturbation post‑step adjustment
-                if watermark_method == "parameter_perturbation" and lambda_wm > 0  and current_step == 0:
-                    if should_embed_watermark(current_step, k, watermark_key, randomize=randomize, device=device):
-                        sel_params = select_parameters_to_perturb(net, num_parameters, watermark_key)
-                        for pname, pt in sel_params:
-                            original_param_values[pname] = pt.detach().cpu().clone().numpy()
-                        pat = generate_watermark_pattern(watermark_key, len(sel_params))
-                        apply_parameter_perturbations(sel_params, pat, perturbation_strength)
+                # ── parameter-perturbation watermark (run **once**, just after step 0) ──
+                if (
+                    watermark_method == "parameter_perturbation"
+                    and lambda_wm > 0
+                    and current_step == 0                # run exactly once
+                    and should_embed_watermark(0, k, watermark_key, randomize, device)
+                ):
+                    # a) select **all** trainable, non-BN tensors
+                    sel_params = [
+                        (n, p) for n, p in net.named_parameters()
+                        if p.requires_grad and not any(
+                            tag in n.lower()
+                            for tag in ("bn", "running_mean", "running_var")
+                        )
+                    ]
+
+                    # b) remember their pre-jump values
+                    for n, p in sel_params:
+                        original_param_values[n] = (
+                            p.detach().cpu().clone().numpy()
+                        )
+
+                    # c) add ±strength offset and freeze them
+                    pat = generate_watermark_pattern(watermark_key, len(sel_params))
+                    apply_parameter_perturbations(
+                        sel_params, pat, perturbation_strength
+                    )
+                    for _, p in sel_params:
+                        p.requires_grad_(False)
 
                 # logging
                 running_loss += loss.item()
