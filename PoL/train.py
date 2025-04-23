@@ -366,7 +366,7 @@ def train(
                     watermark_method == "parameter_perturbation"
                     and lambda_wm > 0
                     and current_step == 0                # run exactly once
-                    and should_embed_watermark(0, k, watermark_key, randomize, device)
+                    and should_embed_watermark(0, k, watermark_key, randomize=randomize, device=device)
                 ):
                     # a) select **all** trainable, non-BN tensors
                     sel_params = [
