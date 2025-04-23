@@ -121,7 +121,7 @@ def _check_init(d: Path, arch) -> bool:
     if not ck.exists():
         logging.error("[init‑ks] model_step_0 missing")
         return False
-    st = torch.load(ck, map_location="cpu")
+    st = torch.load(ck, map_location="cpu", weights_only=False)
     wrapped = any(k.startswith("original_model.") for k in st["net"])
     net = WatermarkModule(arch(), "k", 128) if wrapped else arch()
     net.load_state_dict(st["net"])
@@ -210,7 +210,7 @@ def verify_all(*, model_dir: Path, arch, order, thr, cfg, writer=None) -> bool:
             **cfg["train"]
         )
         checkpoint_path = model_dir / f"model_step_{n}"
-        checkpoint_state = torch.load(checkpoint_path, map_location="cpu")
+        checkpoint_state = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
         checkpoint_model = arch()
         checkpoint_model.load_state_dict(checkpoint_state["net"])
         d = _dist(checkpoint_model, net, order, arch)
@@ -437,7 +437,7 @@ else:
         try:
             if args.watermark_method == "feature_based":
                 net = arch()
-                net.load_state_dict(torch.load(ckpt, map_location=dev))
+                net.load_state_dict(torch.load(ckpt, map_location=dev, weights_only=False))
                 wm_ok = run_feature_based_watermark_verification(
                     model=net,
                     wm_key=args.watermark_key,
@@ -445,10 +445,10 @@ else:
                 )
             elif args.watermark_method == "non_intrusive":
                 net = WatermarkModule(arch(), args.watermark_key, args.watermark_size)
-                net.load_state_dict(torch.load(ckpt, map_location=dev))
+                net.load_state_dict(torch.load(ckpt, map_location=dev, weights_only=False))
                 wm_ok = verify_non_intrusive_watermark(net, dev, args.watermark_key, args.watermark_size, 1e-3)
             elif args.watermark_method == "parameter_perturbation":
-                st = torch.load(ckpt, map_location=dev)
+                st = torch.load(ckpt, map_location=dev, weights_only=False)
                 net = arch()
                 net.load_state_dict(st["net"])
                 wm_ok = verify_parameter_perturbation_watermark_relative(

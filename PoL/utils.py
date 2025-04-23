@@ -57,7 +57,7 @@ def consistent_type(
         if isinstance(model, Path):
             model = str(model)  # Convert Path to string
         assert architecture is not None, "Need architecture if 'model' is a path"
-        state = torch.load(model)
+        state = torch.load(model, weights_only=False)
 
         has_prefix = False
         if 'net' in state:
