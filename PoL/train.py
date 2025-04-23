@@ -561,12 +561,13 @@ if __name__ == "__main__":
         logging.info("Saved model_with_feature_based_watermark.pth")
     elif args.watermark_method == "parameter_perturbation":
         from watermark_utils import verify_parameter_perturbation_watermark_relative
+
         verify_parameter_perturbation_watermark_relative(
             model=trained_model,
             original_params=original_param_values,
-            watermark_key=args.watermark_key,
-            perturbation_strength=args.perturbation_strength,
-            tolerance=1e-1,
+            wm_key=args.watermark_key,
+            strength=args.perturbation_strength,
+            tol=1e-1
         )
         final_ckpt = {
             'net': trained_model.state_dict(),
