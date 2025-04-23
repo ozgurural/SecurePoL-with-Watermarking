@@ -363,15 +363,18 @@ def train(
                 optimizer.step()
 
                 # Parameter‑perturbation post‑step adjustment
-                if watermark_method == "parameter_perturbation" and lambda_wm > 0:
+                if watermark_method == "parameter_perturbation" and lambda_wm > 0  and current_step == 0:
                     if should_embed_watermark(current_step, k, watermark_key, randomize=randomize, device=device):
                         sel_params = select_parameters_to_perturb(net, num_parameters, watermark_key)
+                        for pname, pt in sel_params:
+                            original_param_values[pname] = pt.detach().cpu().clone().numpy()
                         pat = generate_watermark_pattern(watermark_key, len(sel_params))
                         apply_parameter_perturbations(sel_params, pat, perturbation_strength)
 
                 # logging
                 running_loss += loss.item()
                 current_step += 1
+
                 _save_checkpoint(current_step)
 
             # ---------------- end epoch: validation ------------------------- #
