@@ -122,7 +122,9 @@ def _check_init(d: Path, arch) -> bool:
         logging.error("[init‑ks] model_step_0 missing")
         return False
     st = torch.load(ck, map_location="cpu", weights_only=False)
-    wrapped = any(k.startswith("original_model.") for k in st["net"])
+    has_orig_prefix = any(k.startswith("original_model.") for k in st["net"])
+    has_base_prefix = any(k.startswith("base.") for k in st["net"])
+    wrapped = has_orig_prefix or has_base_prefix
     net = WatermarkModule(arch(), "k", 128) if wrapped else arch()
     net.load_state_dict(st["net"])
     ks = utils.check_weights_initialization(next(net.parameters()), "resnet")
