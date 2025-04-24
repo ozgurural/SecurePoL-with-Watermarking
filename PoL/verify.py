@@ -339,6 +339,7 @@ p.add_argument("--dist", nargs="+", default=["1", "2", "inf", "cos"], help="Dist
 p.add_argument("--delta", nargs="+", type=float, default=[1e4, 100, 1, 0.1], help="Thresholds for distance metrics")
 p.add_argument("--q", type=int, default=0, help="Number of top intervals to verify (0 for full verification)")
 p.add_argument("--watermark-path", default="model_with_watermark.pth", help="Path to the watermarked model")
+p.add_argument("--tolerance-wm", type=float, default=1e-3, help="MSE tolerance for non-intrusive watermark verification")
 p.add_argument("--scheduler", type=str, default="step", choices=["none", "step", "cosine"], help="Scheduler type")
 p.add_argument("--log-dir", type=str, default=None, help="Directory for TensorBoard logs")
 p.add_argument("--log-tb", action="store_true", help="Enable TensorBoard logging")
@@ -381,6 +382,7 @@ args.randomize = wm.get("randomize", False)
 args.num_parameters = wm.get("num_parameters", 1000)
 args.perturbation_strength = wm.get("perturbation_strength", 1e-5)
 args.watermark_size = wm.get("watermark_size", 128)
+args.tolerance_wm = wm.get("tolerance_wm", args.tolerance_wm)
 
 # Validate watermark parameters (only if watermark info is provided)
 if wm and not all(f in wm for f in ["watermark_method"] if args.watermark_method != "none"):
@@ -473,7 +475,7 @@ else:
             elif args.watermark_method == "non_intrusive":
                 net = WatermarkModule(arch(), args.watermark_key, args.watermark_size)
                 net.load_state_dict(torch.load(ckpt, map_location=dev, weights_only=False))
-                wm_ok = verify_non_intrusive_watermark(net, dev, args.watermark_key, args.watermark_size, 1e-3)
+                wm_ok = verify_non_intrusive_watermark(net, dev, args.watermark_key, args.watermark_size, args.tolerance_wm)
             elif args.watermark_method == "parameter_perturbation":
                 st = torch.load(ckpt, map_location=dev, weights_only=False)
                 net = arch()
