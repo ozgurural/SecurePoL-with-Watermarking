@@ -42,56 +42,60 @@ def create_sequences(batch_size, dataset_size, epochs, seed=777):
 
 def consistent_type(
         model,
-        architecture=None,
-        device=torch.device('cuda:0' if torch.cuda.is_available() else 'cpu'),
-        half=False,
-        watermark_key="secret_key",
-        watermark_size=128
+        *,
+        architecture     = None,
+        device           = torch.device('cuda' if torch.cuda.is_available() else 'cpu'),
+        half             = False,
+        watermark_key    = "secret_key",
+        watermark_size   = 128
 ):
     """
-    Ensures 'model' is loaded as a single flat weights tensor on the given device,
-    but also checks if the checkpoint has 'original_model.*' keys. If yes, we wrap
-    the base architecture with WatermarkModule before load_state_dict().
+    Normalises every possible “model” input (Tensor • np.ndarray • torch.Module
+    • *.pth path) into a **single-flat 1-D torch.Tensor on the requested
+    device**.  Safe for checkpoints that were saved either
+
+      • as a raw backbone            (keys like 'layer1.0.conv1.weight'), **or**
+      • wrapped by WatermarkModule   (keys start with 'base.' or 'original_model.')
+
+    ── NEW: we now
+      * load with  `weights_only=False`  (PyTorch ≥ 2.6 safety-switch),
+      * detect both 'base.' **and** 'original_model.' prefixes, and
+      * unwrap automatically when needed.
     """
-    if isinstance(model, (str, Path)):          # checkpoint path
-        if isinstance(model, Path):
-            model = str(model)
+    # ---------- checkpoint path on disk ------------------------------------
+    if isinstance(model, (str, Path)):
+        model_path = str(model)
+        assert architecture is not None, "Need `architecture=` when passing a path"
+        state      = torch.load(model_path, map_location=device, weights_only=False)
 
-        assert architecture is not None, "Need architecture when loading from path"
-        state = torch.load(model, weights_only=False)
+        #  a) pull the actual dict with parameters --------------------------
+        net_dict   = state['net'] if isinstance(state, dict) and 'net' in state else state
 
-        # unpack state
-        net_dict = state["net"] if "net" in state else state
-
-        # recognise any WatermarkModule naming scheme
-        wrapped = any(
-            k.startswith("original_model.") or k.startswith("base.")
-            for k in net_dict.keys()
-        )
-
+        #  b) do we need the WatermarkModule wrapper? -----------------------
+        wrapped = any(k.startswith(("base.", "original_model.")) for k in net_dict)
         if wrapped:
-            base_net = architecture()
-            net = WatermarkModule(base_net,
-                                  watermark_key,
-                                  watermark_size=watermark_size)
+            core = WatermarkModule(architecture(), watermark_key, watermark_size)
         else:
-            net = architecture()
+            core = architecture()
 
-        net.load_state_dict(net_dict)
-        net.to(device)
-        weights = get_parameters(net)
+        core.load_state_dict(net_dict)
+        core.to(device)
+        weights = get_parameters(core)
 
+    # ---------- already a model -------------------------------------------
+    elif isinstance(model, torch.nn.Module):
+        weights = get_parameters(model.to(device))
+
+    # ---------- numpy array or tensor -------------------------------------
     elif isinstance(model, np.ndarray):
-        weights = torch.tensor(model)
-
-    elif not isinstance(model, torch.Tensor):
-        weights = get_parameters(model)
-    else:
-        weights = model
+        weights = torch.tensor(model, device=device)
+    else:  # already a tensor
+        weights = model.to(device)
 
     if half:
         weights = weights.half()
-    return weights.to(device)
+
+    return weights
 
 def parameter_distance(
         model1,

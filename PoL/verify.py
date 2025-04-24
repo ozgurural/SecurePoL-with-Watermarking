@@ -240,99 +240,89 @@ def verify_all(*, model_dir: Path, arch, order, thr, cfg, writer=None) -> bool:
     _dump(rows, model_dir, "verify_full_metrics")
     return ok
 
-# ───────── top‑q verifier ─────────
+# ───────── top-q verifier ─────────
 # ───────── top-q verifier ─────────
 def verify_topq(
-    *,
-    model_dir: Path,
-    arch,
-    order,
-    q,
-    epochs,
-    cfg,
-    writer=None,
-    precompute=True
+        *,                       # keyword-only for safety
+        model_dir : Path,
+        arch,
+        order,
+        q          : int,
+        epochs     : int,
+        cfg        : dict,
+        writer     = None,
+        precompute : bool = True
 ) -> bool:
     """
-    Verify the top-q intervals (largest parameter distances).
-
-    Returns
-    -------
-    bool
-        True  – verification succeeded
-        False – PoL invalid or other failure
+    Verify only the q “hardest” (largest-distance) intervals instead of the
+    whole chain.  100 % wrapper-safe: works for plain nets **and** models that
+    were saved inside a WatermarkModule (keys start with 'base.' or
+    'original_model.').
     """
-    ck = sorted(int(Path(p).stem.split("_")[-1])
-                for p in glob.glob(str(model_dir / "model_step_*")))
-    if len(ck) < 2:
+    ck = sorted(int(Path(p).stem.split('_')[-1])
+                for p in glob.glob(str(model_dir / 'model_step_*')))
+    if len(ck) < 2:                       # we need at least two checkpoints
         logging.error("no checkpoints → PoL invalid")
         return False
 
-    seq = np.load(model_dir / "indices.npy")
-    per = max(1, len(ck) // epochs)
+    seq = np.load(model_dir / 'indices.npy')
     rows: list[dict] = []
-
-    # ---- helper: load a checkpoint with possible WatermarkModule wrapper
-    def _load_checkpoint(step: int):
-        st = torch.load(model_dir / f"model_step_{step}",
-                        map_location="cpu",
-                        weights_only=False)
-        return _build_from_state(
-            st["net"], arch,
-            cfg["train"]["watermark_key"],
-            cfg["train"]["watermark_size"]
-        )
+    per  = max(1, len(ck) // epochs)      # how many ckpts per epoch window?
 
     for ep in range(epochs):
-        st_i, en_i = ep * per, min((ep + 1) * per, len(ck) - 1)
-        valid: list[tuple[int, int]] = []
-        dists:  list[float]          = []
+        st, en = ep * per, min((ep + 1) * per, len(ck) - 1)
 
-        # ── pre-scan epoch block ────────────────────────────────────────────
-        for i in range(st_i, en_i):
-            c, n = ck[i], ck[i + 1]
-            s, e = c * cfg["batch_size"], min(n * cfg["batch_size"], len(seq))
-            if s >= e:
+        # ── 1) gather distances for *valid* contiguous intervals ──────────
+        cand: list[tuple[int, int]] = []
+        dist: list[float]           = []
+
+        for i in range(st, en):
+            c, n  = ck[i], ck[i + 1]
+            s, e  = c * cfg['batch_size'], min(n * cfg['batch_size'], len(seq))
+            if s >= e:                    # empty slice → nothing to verify
                 continue
-            valid.append((c, n))
+            cand.append((c, n))
+            dist.append(_dist(model_dir / f'model_step_{c}',
+                               model_dir / f'model_step_{n}',
+                               order, arch)[0])
 
-            # full checkpoint distance (handles wrappers)
-            m_c = _load_checkpoint(c)
-            m_n = _load_checkpoint(n)
-            d   = _dist(m_c, m_n, order, arch)[0]
-            dists.append(d)
-
-        if not valid:
-            logging.warning(f"No valid intervals in epoch-block {ep}")
+        if not cand:
+            logging.warning(f"No valid intervals in epoch window {ep}")
             continue
 
-        # ── pick top-q ──────────────────────────────────────────────────────
-        top_idx = (np.argsort(dists)[-q:] if precompute
-                   else range(max(0, len(valid) - q), len(valid)))
+        # ── 2) pick the q largest distances in this window ────────────────
+        if precompute:
+            top_idx = np.argsort(dist)[-q:]
+        else:                             # cheap mode: take last q intervals
+            top_idx = range(max(0, len(cand) - q), len(cand))
 
+        # ── 3) re-train the slice and compare against the stored ckpt ─────
         for idx in top_idx:
-            c, n = valid[idx]
-            s, e = c * cfg["batch_size"], min(n * cfg["batch_size"], len(seq))
+            c, n = cand[idx]
+            s, e = c * cfg['batch_size'], min(n * cfg['batch_size'], len(seq))
 
-            # retrain on slice s:e
-            net_ref = _silent_train(
-                cfg["log_lvl"],
-                scheduler_type=cfg["scheduler_type"],
-                model_dir=str(model_dir / f"_tmp_ref_{c}_{n}"),
-                sequence=seq[s:e],
-                **cfg["train"]
+            net = _silent_train(
+                cfg['log_lvl'],
+                scheduler_type=cfg['scheduler_type'],
+                model_dir=str(model_dir / f'interval_{c}_{n}'),
+                sequence   =seq[s:e],
+                **cfg['train']
             )
 
-            # distance to target checkpoint (wrapped-aware)
-            m_n = _load_checkpoint(n)
-            d   = _dist(m_n, net_ref, order, arch)[0]
-            rows.append({"interval": f"{c}->{n}", str(order[0]): d})
+            ck_state = torch.load(model_dir / f'model_step_{n}',
+                                   map_location='cpu', weights_only=False)
+            ck_model = _build_from_state(ck_state['net'],
+                                         arch,
+                                         cfg['train']['watermark_key'],
+                                         cfg['train']['watermark_size'])
 
+            d = _dist(ck_model, net, order, arch)[0]
+            rows.append({'interval': f'{c}->{n}', str(order[0]): d})
             if writer:
                 writer.add_scalar(f"topq_dist_{order[0]}", d, len(rows))
 
     _dump(rows, model_dir, "verify_topq_metrics")
-    return bool(rows)
+    return bool(rows)              # → True iff we produced at least one row
 
 # ───────── CLI ─────────
 p = argparse.ArgumentParser(
