@@ -289,7 +289,7 @@ class WatermarkModule(nn.Module):
             Model output or watermark output if triggered.
         """
         logits = self.base(x)
-        return self.fc(logits) if trigger else logits
+        return self.fc(logits.detach()) if trigger else logits
 
 def verify_non_intrusive_watermark(
         model: nn.Module,
