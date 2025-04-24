@@ -158,7 +158,7 @@ def train(
                 original_param_values[n] = p.detach().cpu().clone().numpy()
     # ----------------------------------------------------------------------
     if watermark_method == "non_intrusive":
-        net = WatermarkModule(net, watermark_key, watermark_size=watermark_size)
+        net = WatermarkModule(net, watermark_key, wm_size=watermark_size)
     net.to(device)
     logging.info(f"Model: {architecture.__name__}")
 
