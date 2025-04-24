@@ -53,23 +53,27 @@ def consistent_type(
     but also checks if the checkpoint has 'original_model.*' keys. If yes, we wrap
     the base architecture with WatermarkModule before load_state_dict().
     """
-    if isinstance(model, (str, Path)):  # Updated to handle both str and Path
+    if isinstance(model, (str, Path)):          # checkpoint path
         if isinstance(model, Path):
-            model = str(model)  # Convert Path to string
-        assert architecture is not None, "Need architecture if 'model' is a path"
+            model = str(model)
+
+        assert architecture is not None, "Need architecture when loading from path"
         state = torch.load(model, weights_only=False)
 
-        has_prefix = False
-        if 'net' in state:
-            net_dict = state['net']
-            has_prefix = any(k.startswith("original_model.") for k in net_dict.keys())
-        else:
-            net_dict = state
-            has_prefix = any(k.startswith("original_model.") for k in net_dict.keys())
+        # unpack state
+        net_dict = state["net"] if "net" in state else state
 
-        if has_prefix:
+        # recognise any WatermarkModule naming scheme
+        wrapped = any(
+            k.startswith("original_model.") or k.startswith("base.")
+            for k in net_dict.keys()
+        )
+
+        if wrapped:
             base_net = architecture()
-            net = WatermarkModule(base_net, watermark_key, watermark_size=watermark_size)
+            net = WatermarkModule(base_net,
+                                  watermark_key,
+                                  watermark_size=watermark_size)
         else:
             net = architecture()
 

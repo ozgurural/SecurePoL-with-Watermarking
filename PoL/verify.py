@@ -170,6 +170,15 @@ def _dist(a, b, order, arch):
     """
     return utils.parameter_distance(a, b, order, architecture=arch, half=0)
 
+# ───────── helper: unwrap / wrap checkpoint correctly ─────────
+def _build_from_state(state_dict, arch, wm_key="k", wm_size=128):
+    has_orig = any(k.startswith("original_model.") for k in state_dict)
+    has_base = any(k.startswith("base.")           for k in state_dict)
+    wrapped  = has_orig or has_base
+    model = WatermarkModule(arch(), wm_key, wm_size) if wrapped else arch()
+    model.load_state_dict(state_dict)
+    return model
+
 # ───────── full‑chain verifier ─────────
 def verify_all(*, model_dir: Path, arch, order, thr, cfg, writer=None) -> bool:
     """
@@ -213,8 +222,9 @@ def verify_all(*, model_dir: Path, arch, order, thr, cfg, writer=None) -> bool:
         )
         checkpoint_path = model_dir / f"model_step_{n}"
         checkpoint_state = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-        checkpoint_model = arch()
-        checkpoint_model.load_state_dict(checkpoint_state["net"])
+        checkpoint_model = _build_from_state(
+            checkpoint_state["net"], arch, args.watermark_key, args.watermark_size
+        )
         d = _dist(checkpoint_model, net, order, arch)
         rows.append({"interval": f"{c}->{n}", **{str(o): v for o, v in zip(order, d)}})
         if writer:
@@ -231,68 +241,93 @@ def verify_all(*, model_dir: Path, arch, order, thr, cfg, writer=None) -> bool:
     return ok
 
 # ───────── top‑q verifier ─────────
-def verify_topq(*, model_dir: Path, arch, order, q, epochs, cfg, writer=None, precompute=True) -> bool:
+# ───────── top-q verifier ─────────
+def verify_topq(
+    *,
+    model_dir: Path,
+    arch,
+    order,
+    q,
+    epochs,
+    cfg,
+    writer=None,
+    precompute=True
+) -> bool:
     """
-    Verify the top-q intervals with the largest parameter distances, skipping invalid intervals.
+    Verify the top-q intervals (largest parameter distances).
 
-    Args:
-        model_dir: Directory containing model checkpoints.
-        arch: Model architecture.
-        order: List of distance metrics to use.
-        q: Number of top intervals to verify.
-        epochs: Number of epochs.
-        cfg: Configuration dictionary.
-        writer: TensorBoard writer (optional).
-        precompute: If True, precompute distances for top-q selection.
-
-    Returns:
-        True if verification is successful, False otherwise.
+    Returns
+    -------
+    bool
+        True  – verification succeeded
+        False – PoL invalid or other failure
     """
-    ck = sorted(int(Path(p).stem.split("_")[-1]) for p in glob.glob(str(model_dir / "model_step_*")))
+    ck = sorted(int(Path(p).stem.split("_")[-1])
+                for p in glob.glob(str(model_dir / "model_step_*")))
     if len(ck) < 2:
         logging.error("no checkpoints → PoL invalid")
         return False
+
     seq = np.load(model_dir / "indices.npy")
     per = max(1, len(ck) // epochs)
-    rows = []
+    rows: list[dict] = []
+
+    # ---- helper: load a checkpoint with possible WatermarkModule wrapper
+    def _load_checkpoint(step: int):
+        st = torch.load(model_dir / f"model_step_{step}",
+                        map_location="cpu",
+                        weights_only=False)
+        return _build_from_state(
+            st["net"], arch,
+            cfg["train"]["watermark_key"],
+            cfg["train"]["watermark_size"]
+        )
 
     for ep in range(epochs):
-        st, en = ep * per, min((ep + 1) * per, len(ck) - 1)
-        valid_intervals = []
-        distances = []
+        st_i, en_i = ep * per, min((ep + 1) * per, len(ck) - 1)
+        valid: list[tuple[int, int]] = []
+        dists:  list[float]          = []
 
-        # Filter valid intervals and compute distances
-        for i in range(st, en):
+        # ── pre-scan epoch block ────────────────────────────────────────────
+        for i in range(st_i, en_i):
             c, n = ck[i], ck[i + 1]
             s, e = c * cfg["batch_size"], min(n * cfg["batch_size"], len(seq))
-            if s < e:  # Ensure non-empty slice
-                valid_intervals.append((c, n))
-                dist = _dist(model_dir / f"model_step_{c}", model_dir / f"model_step_{n}", order, arch)[0]
-                distances.append(dist)
+            if s >= e:
+                continue
+            valid.append((c, n))
 
-        if not valid_intervals:
-            logging.warning(f"No valid intervals for epoch {ep}")
+            # full checkpoint distance (handles wrappers)
+            m_c = _load_checkpoint(c)
+            m_n = _load_checkpoint(n)
+            d   = _dist(m_c, m_n, order, arch)[0]
+            dists.append(d)
+
+        if not valid:
+            logging.warning(f"No valid intervals in epoch-block {ep}")
             continue
 
-        # Select top-q intervals from valid ones
-        if precompute:
-            top_indices = np.argsort(distances)[-q:]
-        else:
-            top_indices = range(max(0, len(valid_intervals) - q), len(valid_intervals))
+        # ── pick top-q ──────────────────────────────────────────────────────
+        top_idx = (np.argsort(dists)[-q:] if precompute
+                   else range(max(0, len(valid) - q), len(valid)))
 
-        # Retrain and verify selected intervals
-        for idx in top_indices:
-            c, n = valid_intervals[idx]
+        for idx in top_idx:
+            c, n = valid[idx]
             s, e = c * cfg["batch_size"], min(n * cfg["batch_size"], len(seq))
-            net = _silent_train(
+
+            # retrain on slice s:e
+            net_ref = _silent_train(
                 cfg["log_lvl"],
                 scheduler_type=cfg["scheduler_type"],
-                model_dir=str(model_dir / f"model_step_{c}"),
+                model_dir=str(model_dir / f"_tmp_ref_{c}_{n}"),
                 sequence=seq[s:e],
                 **cfg["train"]
             )
-            d = _dist(model_dir / f"model_step_{n}", net, order, arch)[0]
+
+            # distance to target checkpoint (wrapped-aware)
+            m_n = _load_checkpoint(n)
+            d   = _dist(m_n, net_ref, order, arch)[0]
             rows.append({"interval": f"{c}->{n}", str(order[0]): d})
+
             if writer:
                 writer.add_scalar(f"topq_dist_{order[0]}", d, len(rows))
 
