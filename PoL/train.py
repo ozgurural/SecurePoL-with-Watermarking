@@ -151,12 +151,27 @@ def train(
     # ----------------------------------------------------------------------- #
     net = architecture()
     net.apply(_weights_init)
-    # ── remember originals only for the parameters we will perturb ───────────
-    original_param_values = {}
+
+    # Will hold pristine copies for later verification
+    original_param_values: dict[str, np.ndarray] = {}
+
     if watermark_method == "parameter_perturbation":
-        for n, p in select_parameters_to_perturb(
-                net, num_parameters, watermark_key, layer_regex):
-            original_param_values[n] = p.detach().cpu().clone().numpy()
+        # 1) Pick a deterministic subset of trainable tensors
+        sel_params = select_parameters_to_perturb(
+            net, num_parameters, watermark_key, layer_regex
+        )
+
+        # 2) Snapshot their original values
+        for name, p in sel_params:
+            original_param_values[name] = p.detach().cpu().clone().numpy()
+
+        # 3) Apply the ±strength jump according to the key-derived bit pattern
+        pattern = generate_watermark_pattern(watermark_key, len(sel_params))
+        apply_parameter_perturbations(sel_params, pattern, perturbation_strength)
+
+        # 4) Freeze them so training can’t undo the watermark
+        for _, p in sel_params:
+            p.requires_grad_(False)
 
     # ----------------------------------------------------------------------
     if watermark_method == "non_intrusive":
@@ -362,25 +377,6 @@ def train(
                 # --------------------------- backward ------------------------ #
                 loss.backward()
                 optimizer.step()
-
-                if (watermark_method == "parameter_perturbation"
-                        and lambda_wm > 0
-                        and current_step == 0
-                        and should_embed_watermark(0, k, watermark_key,
-                                                   randomize=randomize, device=device)):
-                    # a) choose the exact same subset
-                    sel_params = select_parameters_to_perturb(
-                        net, num_parameters, watermark_key, layer_regex)
-
-                    # b) remember originals (again, in case we resumed)
-                    for n, p in sel_params:
-                        original_param_values[n] = p.detach().cpu().clone().numpy()
-
-                    # c) apply ±strength jump and freeze
-                    pat = generate_watermark_pattern(watermark_key, len(sel_params))
-                    apply_parameter_perturbations(sel_params, pat, perturbation_strength)
-                    for _, p in sel_params:
-                        p.requires_grad_(False)
 
                 # logging
                 running_loss += loss.item()
