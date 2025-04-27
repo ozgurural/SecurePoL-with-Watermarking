@@ -34,6 +34,7 @@ from watermark_utils import (  # local watermark_utils.py
     generate_watermark_target,
     verify_non_intrusive_watermark,
     run_feature_based_watermark_verification,
+    select_parameters_to_perturb,
 )
 
 # --------------------------------------------------------------------------- #
@@ -96,6 +97,7 @@ def train(
         scheduler_type: str = "step",
         verbose: bool = False,
         save_checkpoints: bool = True,  # Controls checkpoint saving and directory creation
+        layer_regex: str = "",
 ):
     """
     Train a model and (optionally) embed a watermark.
@@ -149,13 +151,13 @@ def train(
     # ----------------------------------------------------------------------- #
     net = architecture()
     net.apply(_weights_init)
-    # ---------- NEW (baseline snapshot) -----------------------------------
+    # ── remember originals only for the parameters we will perturb ───────────
     original_param_values = {}
     if watermark_method == "parameter_perturbation":
-        for n, p in net.named_parameters():
-            if p.requires_grad and not any(tag in n.lower()
-                                           for tag in ("bn", "running_mean", "running_var")):
-                original_param_values[n] = p.detach().cpu().clone().numpy()
+        for n, p in select_parameters_to_perturb(
+                net, num_parameters, watermark_key, layer_regex):
+            original_param_values[n] = p.detach().cpu().clone().numpy()
+
     # ----------------------------------------------------------------------
     if watermark_method == "non_intrusive":
         net = WatermarkModule(net, watermark_key, wm_size=watermark_size)
@@ -361,33 +363,22 @@ def train(
                 loss.backward()
                 optimizer.step()
 
-                # ── parameter-perturbation watermark (run **once**, just after step 0) ──
-                if (
-                    watermark_method == "parameter_perturbation"
-                    and lambda_wm > 0
-                    and current_step == 0                # run exactly once
-                    and should_embed_watermark(0, k, watermark_key, randomize=randomize, device=device)
-                ):
-                    # a) select **all** trainable, non-BN tensors
-                    sel_params = [
-                        (n, p) for n, p in net.named_parameters()
-                        if p.requires_grad and not any(
-                            tag in n.lower()
-                            for tag in ("bn", "running_mean", "running_var")
-                        )
-                    ]
+                if (watermark_method == "parameter_perturbation"
+                        and lambda_wm > 0
+                        and current_step == 0
+                        and should_embed_watermark(0, k, watermark_key,
+                                                   randomize=randomize, device=device)):
+                    # a) choose the exact same subset
+                    sel_params = select_parameters_to_perturb(
+                        net, num_parameters, watermark_key, layer_regex)
 
-                    # b) remember their pre-jump values
+                    # b) remember originals (again, in case we resumed)
                     for n, p in sel_params:
-                        original_param_values[n] = (
-                            p.detach().cpu().clone().numpy()
-                        )
+                        original_param_values[n] = p.detach().cpu().clone().numpy()
 
-                    # c) add ±strength offset and freeze them
+                    # c) apply ±strength jump and freeze
                     pat = generate_watermark_pattern(watermark_key, len(sel_params))
-                    apply_parameter_perturbations(
-                        sel_params, pat, perturbation_strength
-                    )
+                    apply_parameter_perturbations(sel_params, pat, perturbation_strength)
                     for _, p in sel_params:
                         p.requires_grad_(False)
 
@@ -525,6 +516,13 @@ if __name__ == "__main__":
     # TensorBoard flag
     parser.add_argument("--log-tb", action="store_true", help="Enable TensorBoard logging")
 
+    parser.add_argument(
+        "--layer-regex",
+        type=str,
+        default="",
+        help="Regex filter for parameter-perturbation WM (e.g. 'fc$' → last layer only)"
+    )
+
     args = parser.parse_args()
 
     # Re‑seed
@@ -571,7 +569,8 @@ if __name__ == "__main__":
         log_dir=args.log_dir,
         scheduler_type=args.scheduler,
         verbose=args.verbose,
-        save_checkpoints=True  # Default to True for training, False for verification
+        save_checkpoints=True,  # Default to True for training, False for verification
+        layer_regex=args.layer_regex
     )
 
     # ----- POST‑TRAINING WATERMARK CHECKS AND MODEL SAVING ----------------- #

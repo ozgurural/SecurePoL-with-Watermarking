@@ -64,29 +64,54 @@ def generate_watermark_pattern(wm_key: str, length: int) -> np.ndarray:
     """
     return _np_rng(wm_key).integers(0, 2, size=length, dtype=np.int8)
 
-def select_parameters_to_perturb(model: nn.Module, num_params: int, wm_key: str) -> List[Tuple[str, nn.Parameter]]:
-    """Select a deterministic subset of trainable, non-BatchNorm parameters.
-
-    Args:
-        model: PyTorch model to select parameters from.
-        num_params: Number of parameters to select.
-        wm_key: Watermark key for deterministic selection.
-
-    Returns:
-        List of (name, parameter) tuples to perturb.
-
-    Raises:
-        ValueError: If num_params exceeds available trainable parameters.
+def select_parameters_to_perturb(
+        model      : nn.Module,
+        num_params : int,
+        wm_key     : str,
+        layer_regex: str = ""
+) -> List[Tuple[str, nn.Parameter]]:
     """
-    params = [
+    Deterministically choose `num_params` trainable, non-BatchNorm tensors.
+
+    Args
+    ----
+    model        : target network.
+    num_params   : how many tensors to perturb.
+    wm_key       : secret key (used as RNG seed so the same key → same subset).
+    layer_regex  : optional regular expression — only parameters whose *names*
+                   match this regex are considered.  Leave blank ("") to keep
+                   the previous behaviour (all eligible layers).
+
+    Returns
+    -------
+    List of (name, parameter) tuples to perturb.
+
+    Raises
+    ------
+    ValueError if `num_params` exceeds the number of eligible tensors.
+    """
+    import re
+
+    candidates = [
         (n, p) for n, p in model.named_parameters()
-        if p.requires_grad and not any(tag in n.lower() for tag in ("bn", "running_mean", "running_var"))
+        if p.requires_grad
+        and not any(tag in n.lower()                       # skip BN stats
+                    for tag in ("bn", "running_mean", "running_var"))
+        and (layer_regex == "" or re.search(layer_regex, n))
     ]
-    if num_params > len(params):
-        raise ValueError(f"num_params={num_params} exceeds available trainables ({len(params)})")
-    params.sort(key=lambda x: x[0])
-    idxs = _np_rng(wm_key + "_param_select").choice(len(params), size=num_params, replace=False)
-    return [params[i] for i in idxs]
+
+    if num_params > len(candidates):
+        raise ValueError(
+            f"num_params={num_params} exceeds eligible tensors ({len(candidates)})"
+        )
+
+    # stable order → stable indices
+    candidates.sort(key=lambda x: x[0])
+
+    rng      = _np_rng(wm_key + "_param_select")
+    idx_pick = rng.choice(len(candidates), size=num_params, replace=False)
+
+    return [candidates[i] for i in idx_pick]
 
 def apply_parameter_perturbations(chosen: List[Tuple[str, nn.Parameter]], pattern: np.ndarray, strength: float) -> None:
     """Apply in-place perturbations to parameters based on the pattern.
