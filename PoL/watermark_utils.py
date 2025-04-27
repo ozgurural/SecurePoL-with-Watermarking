@@ -377,8 +377,9 @@ def verify_parameter_perturbation_watermark_relative(
     ok = True
     for (name, now), bit in zip(cand, pattern):
         expected = strength if bit else -strength
-        then = original_params.get(name) if original_params else np.zeros_like(now)
-        diff = np.abs((now - then) - expected).max()
+        # if that tensor wasn’t in the dict, fall back to “no-change” (= now)
+        ref = original_params.get(name, now) if original_params else now
+        diff = np.abs((now - ref) - expected).max()
         if diff > tol:
             logging.error(f"Δ mismatch {name}  diff {diff:.3e} > tol {tol:.3e}")
             ok = False
