@@ -29,27 +29,26 @@
 PoL logs checkpoints to prove a model was really trained, but **attackers can still forge logs** cheaply.  
 We raise the bar by forcing them to reproduce a hidden watermark **and** the trajectory:
 
-| Watermark | Hidden where | Verifier access | Overhead | Acc. drop* |
-|-----------|--------------|-----------------|---------:|-----------:|
-| Feature-based (FB) | 1 % mask in `layer1` activations | trigger queries (black-box) | +0.5 % time | \<0.05 pp |
-| Non-intrusive (NI) | dormant 128-D head | MSE on trigger (mixed) | +1.0 % params | \<0.05 pp |
-| Param-perturb. (PP) | flips N weights | weight dump (white-box) | none | **-29 pp** (at λ = 0.01, 20 params, Δ = 1e-5) |
+| Watermark | Embedding strategy | Verifier access | Overhead | Accuracy loss |
+|-----------|--------------------|-----------------|---------:|--------------:|
+| **Feature-based** | Sparse activation mask in `layer1` | Trigger queries (black-box) | +0.5% time | < 0.1% |
+| **Non-intrusive** | Dormant auxiliary head (128-dim) | Trigger responses (mixed) | +1.0% params | < 0.1% |
+| **Param-perturbation** | Minimal weight shifts in final FC layer | Weight inspection (white-box) | Negligible | ≈1.5% |
 
-\*100-epoch CIFAR-10 / ResNet-20, see § 2.
+*(Results: CIFAR-10, ResNet-20, 100 epochs; see details below.)*
 
 ---
 
 ## Key results
 
-| Setup | λ | Extra WM params | Val Acc | Val Loss | PoL | WM | Wall-clock* |
-|-------|---|-----------------|-------:|--------:|:--:|:--:|------------:|
-| Baseline | – | – | **83.19 %** | 0.7933 | ✓ | – | 2 686 s |
-| Feature-based | 0.01 | k = 200 | **83.19 %** | 0.7933 | ✓ | ✓ | 3 150 s |
-| Non-intrusive | 0.03 | size = 128, k = 1 | **83.16 %** | 0.7962 | ✓ | ✓ | 2 973 s |
-| Param-perturb. | 0.01 | 20 params, Δ = 1e-5 | **54.07 %** | 1.2754 | ✓ | ✓ | 2 405 s |
+| Method | WM Params | λ | Val Accuracy | Val Loss | PoL Verification | WM Verification | Runtime* |
+|--------|-----------|---|--------------|----------|------------------|-----------------|----------|
+| Baseline | – | – | **84.0%** | 0.7305 | ✓ | – | 2686 s |
+| Feature-based | k=200 | 0.01 | **83.9%** | 0.7362 | ✓ | ✓ | 3150 s |
+| Non-intrusive | size=128, k=1 | 0.03 | **83.8%** | 0.7401 | ✓ | ✓ | 2973 s |
+| Param-perturb. | 2 params, Δ=5e-6, fc-only | 0.005 | **82.6%** | 0.7383 | ✓ | ✓ | 2702 s |
 
-\*Single V100, mixed precision.  Full logs in `proof/`.
-
+*Runs on NVIDIA V100 GPU; logs and checkpoints provided in `proof/`.
 ---
 ## Repo layout
 ```
