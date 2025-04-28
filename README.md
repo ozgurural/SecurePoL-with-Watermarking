@@ -48,7 +48,7 @@ We raise the bar by forcing them to reproduce a hidden watermark **and** the tra
 | Non-intrusive | size=128, k=1 | 0.03 | **83.16 %** | 0.7962 | ✓ | ✓ | 2973 s |
 | Param-perturb. | 2 params (fc-only), Δ=5e-6, k=200  | 0.005 | **82.61 %** | 0.7383 | ✓ | ✓ | 2702 s |
 
-*Runs on NVIDIA V100 GPU; logs and checkpoints provided in `proof/`.
+*Runs on T4 GPU; logs and checkpoints provided in `proof/`.
 ---
 ## Repo layout
 ```
