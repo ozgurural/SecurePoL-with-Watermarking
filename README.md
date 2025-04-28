@@ -43,10 +43,10 @@ We raise the bar by forcing them to reproduce a hidden watermark **and** the tra
 
 | Method | WM Params | λ | Val Accuracy | Val Loss | PoL Verification | WM Verification | Runtime* |
 |--------|-----------|---|--------------|----------|------------------|-----------------|----------|
-| Baseline | – | – | **84.0%** | 0.7305 | ✓ | – | 2686 s |
-| Feature-based | k=200 | 0.01 | **83.9%** | 0.7362 | ✓ | ✓ | 3150 s |
-| Non-intrusive | size=128, k=1 | 0.03 | **83.8%** | 0.7401 | ✓ | ✓ | 2973 s |
-| Param-perturb. | 2 params, Δ=5e-6, fc-only | 0.005 | **82.6%** | 0.7383 | ✓ | ✓ | 2702 s |
+| Baseline | – | – | **83.19 %** | 0.7933 | ✓ | – | 2686 s |
+| Feature-based | k=200 | 0.01 | **83.19 %** | 0.7933 | ✓ | ✓ | 3150 s |
+| Non-intrusive | size=128, k=1 | 0.03 | **83.16 %** | 0.7962 | ✓ | ✓ | 2973 s |
+| Param-perturb. | 2 params (fc-only), Δ=5e-6, k=200  | 0.005 | **82.61 %** | 0.7383 | ✓ | ✓ | 2702 s |
 
 *Runs on NVIDIA V100 GPU; logs and checkpoints provided in `proof/`.
 ---
