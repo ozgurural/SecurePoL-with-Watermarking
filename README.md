@@ -1,6 +1,8 @@
 # 🔐 SecurePoL-WM  
 **Enhancing Security of Proof-of-Learning (PoL) Against Spoofing Attacks via Advanced Model Watermarking**
 
+📄 **Paper:** [SecurePoL: Integration of Watermarking With Proof-of-Learning to Enhance Security Against Spoofing Attacks](https://doi.org/10.1109/ACCESS.2025.3642198), IEEE Access, vol. 13, 2025 (open access). [Ph.D. dissertation](https://commons.erau.edu/edt/905/).
+
 [![Python](https://img.shields.io/badge/python->=3.9-blue?logo=python)](https://www.python.org/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.2.x-EE4C2C?logo=pytorch)](https://pytorch.org/)
 
@@ -169,6 +171,26 @@ Tiny-ImageNet demo:
 ---
 
 ## Cite & license
+If you use this code, please cite the SecurePoL paper it implements:
+
+```bibtex
+@article{ural2025securepol,
+  author  = {Ural, Ozgur and Yoshigoe, Kenji},
+  title   = {SecurePoL: Integration of Watermarking With Proof-of-Learning to Enhance Security Against Spoofing Attacks},
+  journal = {IEEE Access},
+  year    = {2025},
+  volume  = {13},
+  pages   = {213067--213091},
+  doi     = {10.1109/ACCESS.2025.3642198}
+}
+```
+
+- Paper (open access): https://doi.org/10.1109/ACCESS.2025.3642198
+- Summary, measured results and BibTeX: https://ozgurural.github.io/publication/2025-secureproofoflearning
+- Ph.D. dissertation: https://commons.erau.edu/edt/905/
+
+The feature-based scheme was first published in:
+
 ```bibtex
 @ARTICLE{10741282,
   author={Ural, Ozgur and Yoshigoe, Kenji},

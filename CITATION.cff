@@ -1,0 +1,67 @@
+cff-version: 1.2.0
+message: "If you use this code, please cite the SecurePoL paper below."
+title: "SecurePoL-with-Watermarking"
+type: software
+abstract: >-
+  Reference implementation of SecurePoL: Proof-of-Learning training logs
+  combined with three model watermarking strategies (feature-based triggers,
+  sparse parameter perturbation, and a non-intrusive auxiliary head), with a
+  dual-layer verifier and a spoofing-attack harness. CIFAR-10, ResNet-20.
+authors:
+  - family-names: Ural
+    given-names: Ozgur
+    orcid: "https://orcid.org/0000-0003-1329-4303"
+repository-code: "https://github.com/ozgurural/SecurePoL-with-Watermarking"
+url: "https://ozgurural.github.io/publication/2025-secureproofoflearning"
+keywords:
+  - proof-of-learning
+  - model watermarking
+  - spoofing attacks
+  - model provenance
+  - machine learning security
+preferred-citation:
+  type: article
+  title: "SecurePoL: Integration of Watermarking With Proof-of-Learning to Enhance Security Against Spoofing Attacks"
+  authors:
+    - family-names: Ural
+      given-names: Ozgur
+      orcid: "https://orcid.org/0000-0003-1329-4303"
+    - family-names: Yoshigoe
+      given-names: Kenji
+      orcid: "https://orcid.org/0000-0001-6040-4742"
+  journal: "IEEE Access"
+  year: 2025
+  volume: 13
+  start: 213067
+  end: 213091
+  doi: "10.1109/ACCESS.2025.3642198"
+  url: "https://doi.org/10.1109/ACCESS.2025.3642198"
+  publisher:
+    name: "IEEE"
+references:
+  - type: article
+    title: "Enhancing Security of Proof-of-Learning Against Spoofing Attacks Using Feature-Based Model Watermarking"
+    authors:
+      - family-names: Ural
+        given-names: Ozgur
+        orcid: "https://orcid.org/0000-0003-1329-4303"
+      - family-names: Yoshigoe
+        given-names: Kenji
+        orcid: "https://orcid.org/0000-0001-6040-4742"
+    journal: "IEEE Access"
+    year: 2024
+    volume: 12
+    start: 169567
+    end: 169591
+    doi: "10.1109/ACCESS.2024.3489776"
+  - type: thesis
+    title: "Enhancing Proof-of-Learning Security Against Spoofing Attacks Using Model Watermarking"
+    authors:
+      - family-names: Ural
+        given-names: Ozgur
+        orcid: "https://orcid.org/0000-0003-1329-4303"
+    thesis-type: "Ph.D. dissertation"
+    institution:
+      name: "Embry-Riddle Aeronautical University"
+    year: 2025
+    url: "https://commons.erau.edu/edt/905/"
