@@ -1,7 +1,19 @@
 # 🔐 SecurePoL-WM  
 **Enhancing Security of Proof-of-Learning (PoL) Against Spoofing Attacks via Advanced Model Watermarking**
 
-📄 **Paper:** [SecurePoL: Integration of Watermarking With Proof-of-Learning to Enhance Security Against Spoofing Attacks](https://doi.org/10.1109/ACCESS.2025.3642198), IEEE Access, vol. 13, 2025 (open access). [Ph.D. dissertation](https://commons.erau.edu/edt/905/).
+## Papers
+
+This repository is the reference implementation of:
+
+- **SecurePoL: Integration of Watermarking With Proof-of-Learning to Enhance Security Against Spoofing Attacks.** O. Ural, K. Yoshigoe. *IEEE Access*, vol. 13, pp. 213067–213091, 2025. DOI: [10.1109/ACCESS.2025.3642198](https://doi.org/10.1109/ACCESS.2025.3642198) (open access)
+- **Enhancing Security of Proof-of-Learning Against Spoofing Attacks Using Feature-Based Model Watermarking.** O. Ural, K. Yoshigoe. *IEEE Access*, vol. 12, pp. 169567–169591, 2024. DOI: [10.1109/ACCESS.2024.3489776](https://doi.org/10.1109/ACCESS.2024.3489776)
+- **Enhancing Proof-of-Learning Security Against Spoofing Attacks Using Model Watermarking.** O. Ural. Ph.D. dissertation, Embry-Riddle Aeronautical University, 2025. [commons.erau.edu/edt/905](https://commons.erau.edu/edt/905/)
+
+## How to cite
+
+If you use this code, please cite the SecurePoL paper above. Citation metadata is in [`CITATION.cff`](CITATION.cff), so GitHub's **"Cite this repository"** button gives APA and BibTeX directly; the BibTeX entries are also in [Cite & license](#cite--license) below.
+
+Released under the [MIT License](LICENSE).
 
 [![Python](https://img.shields.io/badge/python->=3.9-blue?logo=python)](https://www.python.org/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.2.x-EE4C2C?logo=pytorch)](https://pytorch.org/)
@@ -188,6 +200,7 @@ If you use this code, please cite the SecurePoL paper it implements:
 - Paper (open access): https://doi.org/10.1109/ACCESS.2025.3642198
 - Summary, measured results and BibTeX: https://ozgurural.github.io/publication/2025-secureproofoflearning
 - Ph.D. dissertation: https://commons.erau.edu/edt/905/
+- License: [MIT](LICENSE)
 
 The feature-based scheme was first published in:
 
